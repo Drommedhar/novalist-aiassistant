@@ -1,0 +1,51 @@
+name: Release Extension
+
+on:
+  push:
+    tags:
+      - "v*"
+
+env:
+  DOTNET_VERSION: 8.0.x
+  EXTENSION_ID: com.novalist.ai
+  CONFIGURATION: Release
+
+jobs:
+  build:
+    name: Build & Release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Restore
+        run: dotnet restore -p:UseLocalSdk=false
+
+      - name: Build
+        run: >-
+          dotnet build
+          -c ${{ env.CONFIGURATION }}
+          --no-restore
+          -p:UseLocalSdk=false
+
+      - name: Create extension ZIP
+        run: |
+          cd bin/${{ env.CONFIGURATION }}/net8.0
+          zip ${{ github.workspace }}/${{ env.EXTENSION_ID }}.zip \
+            Novalist.Extensions.AiAssistant.dll \
+            extension.json \
+            Locales/*.json
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: ${{ env.EXTENSION_ID }}.zip
