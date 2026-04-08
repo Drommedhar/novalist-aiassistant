@@ -167,10 +167,25 @@ public partial class AiChatViewModel : ObservableObject
         {
             var characters = entities.Where(e => e.Type == "character").Select(e => e.Name).ToList();
             var locations = entities.Where(e => e.Type == "location").Select(e => e.Name).ToList();
+            var items = entities.Where(e => e.Type == "item").Select(e => e.Name).ToList();
+            var loreNames = entities.Where(e => e.Type == "lore").Select(e => e.Name).ToList();
+
+            // Group custom entity names by type display name
+            var customEntityNames = new Dictionary<string, IReadOnlyList<string>>();
+            foreach (var group in entities.Where(e => e.Type.StartsWith("custom:", StringComparison.Ordinal))
+                         .GroupBy(e => e.Type))
+            {
+                var displayName = group.Key.Length > 7 ? group.Key[7..] : group.Key;
+                customEntityNames[displayName] = group.Select(e => e.Name).ToList();
+            }
+
             var aiContext = new AiPromptContext
             {
                 CharacterNames = characters,
                 LocationNames = locations,
+                ItemNames = items,
+                LoreNames = loreNames,
+                CustomEntityNames = customEntityNames,
                 Language = _host.CurrentLanguage
             };
 
@@ -224,6 +239,24 @@ public partial class AiChatViewModel : ObservableObject
                 var details = new StringBuilder();
                 if (!string.IsNullOrEmpty(lr.Category)) details.Append($"Category: {lr.Category}. ");
                 summaries.Add(new EntitySummary { Name = lr.Name, Type = "lore", Details = details.ToString().TrimEnd() });
+            }
+
+            // Collect custom entity types and their entities
+            var customTypes = _host.EntityService.GetCustomEntityTypes();
+            foreach (var ct in customTypes)
+            {
+                try
+                {
+                    var customEntities = await _host.EntityService.LoadCustomEntitiesAsync(ct.TypeKey);
+                    foreach (var ce in customEntities)
+                    {
+                        var ceDetails = new StringBuilder();
+                        foreach (var field in ce.Fields.Take(3))
+                            ceDetails.Append($"{field.Key}: {field.Value}. ");
+                        summaries.Add(new EntitySummary { Name = ce.Name, Type = $"custom:{ct.DisplayName}", Details = ceDetails.ToString().TrimEnd() });
+                    }
+                }
+                catch { /* skip inaccessible custom type */ }
             }
         }
         catch
