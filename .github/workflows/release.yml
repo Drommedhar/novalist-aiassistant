@@ -26,6 +26,11 @@ jobs:
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
+      - name: Set version in extension.json
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          jq --arg v "$VERSION" '.version = $v' extension.json > extension.tmp && mv extension.tmp extension.json
+
       - name: Restore
         run: dotnet restore -p:UseLocalSdk=false
 
