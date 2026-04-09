@@ -14,7 +14,7 @@
     <ProjectReference Include="..\novalist-official\Novalist.Sdk\Novalist.Sdk.csproj" />
   </ItemGroup>
   <ItemGroup Condition="'$(UseLocalSdk)' == 'false'">
-    <PackageReference Include="Novalist.Sdk" Version="2.*" />
+    <PackageReference Include="Novalist.Sdk" Version="*" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Avalonia" Version="11.3.12" />
