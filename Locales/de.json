@@ -7,7 +7,7 @@
     "aiGroup": "KI"
   },
   "settings": {
-    "category": "KI / LLM",
+    "ai": "KI / LLM",
     "aiEnabled": "KI-Funktionen aktivieren",
     "aiEnabledDesc": "Verbindung zu einem KI-Anbieter f\u00fcr KI-gest\u00fctzte Analyse und Chat.",
     "aiProvider": "Anbieter",

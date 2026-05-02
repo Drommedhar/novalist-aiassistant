@@ -7,7 +7,7 @@
     "aiGroup": "AI"
   },
   "settings": {
-    "category": "AI / LLM",
+    "ai": "AI / LLM",
     "aiEnabled": "Enable AI features",
     "aiEnabledDesc": "Connect to an AI provider for AI-powered analysis and chat.",
     "aiProvider": "Provider",
@@ -38,6 +38,8 @@
     "aiCheckSuggestions": "Suggest new entities",
     "aiCheckSceneStats": "Generate scene statistics",
     "aiDisableRegex": "Find all references (disable regex pre-filter)",
+    "aiGrammarCheckEnabled": "Enable AI grammar check",
+    "aiGrammarCheckEnabledDesc": "Use the AI to check grammar, punctuation, and style in the editor.",
     "aiResponseLanguage": "AI Response Language",
     "aiResponseLanguagePlaceholder": "e.g. German, English (empty = UI language)",
     "aiSystemPrompt": "System Prompt",

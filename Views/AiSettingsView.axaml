@@ -198,6 +198,23 @@
 
         <Border Height="1" Background="{DynamicResource RibbonGroupBorder}" Margin="0,4,0,0" />
 
+        <!-- Editor Assistance -->
+        <TextBlock Text="Editor Assistance"
+                   FontSize="12"
+                   FontWeight="SemiBold"
+                   Foreground="{DynamicResource NormalText}" />
+
+        <StackPanel Spacing="2">
+            <CheckBox IsChecked="{Binding AiGrammarCheckEnabled}"
+                      Content="{Binding Loc[settings.aiGrammarCheckEnabled]}"
+                      FontSize="12" />
+            <TextBlock Text="{Binding Loc[settings.aiGrammarCheckEnabledDesc]}"
+                       FontSize="11"
+                       Foreground="{DynamicResource DimText}" />
+        </StackPanel>
+
+        <Border Height="1" Background="{DynamicResource RibbonGroupBorder}" Margin="0,4,0,0" />
+
         <!-- Response Language -->
         <TextBlock Text="{Binding Loc[settings.aiResponseLanguage]}"
                    FontSize="12"
