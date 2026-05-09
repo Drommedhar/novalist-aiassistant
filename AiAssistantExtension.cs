@@ -179,7 +179,7 @@ public sealed class AiAssistantExtension : IExtension, IRibbonContributor, ISide
                 Id = "com.novalist.ai.chat",
                 Label = _loc.T("ribbon.aiChat"),
                 IconPath = IconMessageSquare,
-                Side = "Right",
+                Side = "Context",
                 Tooltip = _loc.T("ribbon.aiChatTooltip"),
                 CreateView = () =>
                 {
