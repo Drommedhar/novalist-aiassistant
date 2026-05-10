@@ -22,12 +22,21 @@ public sealed class AiAssistantExtension : IExtension, IRibbonContributor, ISide
     internal Services.AiService AiService { get; } = new();
     internal AiSettings Settings { get; private set; } = new();
     private AiGrammarCheckService? _grammarCheckService;
+    private CharacterKnowledgeService? _knowledgeService;
+    private KnowledgeBuilder? _knowledgeBuilder;
 
     private AiChatViewModel? _chatVm;
+    private CharacterChatViewModel? _characterChatVm;
     private StoryAnalysisViewModel? _analysisVm;
     private AiSettingsViewModel? _settingsVm;
     private bool _isChatVisible;
+    private bool _isCharacterChatVisible;
     private bool _isAnalysisVisible;
+    private SceneInfo? _lastOpenedScene;
+    private List<CharacterInfo> _charactersCache = [];
+
+    internal CharacterKnowledgeService? KnowledgeService => _knowledgeService;
+    internal SceneInfo? CurrentScene => _host.ProjectService.CurrentScene ?? _lastOpenedScene;
 
     // ── IGrammarCheckContributor ────────────────────────────────────
 
@@ -53,6 +62,7 @@ public sealed class AiAssistantExtension : IExtension, IRibbonContributor, ISide
     // Icon paths (Lucide)
     private const string IconMessageSquare = "M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z";
     private const string IconSearch = "M11 17.25a6.25 6.25 0 1 1 0-12.5 6.25 6.25 0 0 1 0 12.5zm0 0L16.65 22.9";
+    private const string IconUser = "M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2 M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z";
 
     public void Initialize(IHostServices host)
     {
@@ -64,7 +74,113 @@ public sealed class AiAssistantExtension : IExtension, IRibbonContributor, ISide
         _grammarCheckService = new AiGrammarCheckService(AiService);
         _grammarCheckService.IsGrammarCheckEnabled = Settings.GrammarCheckEnabled;
 
+        _knowledgeBuilder = new KnowledgeBuilder(AiService);
+        _knowledgeService = new CharacterKnowledgeService(host, _knowledgeBuilder, Id);
+
         host.LanguageChanged += OnLanguageChanged;
+        host.SceneOpened += scene =>
+        {
+            System.Diagnostics.Debug.WriteLine($"[AiAssistant] host.SceneOpened id={scene.Id} title={scene.Title}");
+            _lastOpenedScene = scene;
+        };
+        host.SceneSaved += scene => { _ = OnSceneSavedAsync(scene); };
+        host.ProjectLoaded += info => { _ = ReloadCharactersAsync(); };
+        _ = ReloadCharactersAsync();
+    }
+
+    private async Task ReloadCharactersAsync()
+    {
+        try
+        {
+            var chars = await _host.EntityService.LoadCharactersAsync();
+            _charactersCache = chars.ToList();
+        }
+        catch
+        {
+            _charactersCache = [];
+        }
+    }
+
+    private async Task OnSceneSavedAsync(SceneInfo scene)
+    {
+        if (!Settings.EnableCharacterKnowledge || _knowledgeService == null) return;
+        try
+        {
+            // We don't know which characters were in the scene before this
+            // save, so invalidate every character whose entry references it.
+            // Cheaper than scanning content again, and lazy regen handles it.
+            foreach (var character in _charactersCache)
+                await _knowledgeService.InvalidateSceneAsync(scene.Id, [character.Id]);
+        }
+        catch { }
+    }
+
+    internal async Task<bool> ClearKnowledgeCacheAsync()
+    {
+        if (_knowledgeService == null)
+        {
+            _host.ShowNotification(_loc.T("toast.knowledgeClearFailed"));
+            return false;
+        }
+
+        try
+        {
+            await _knowledgeService.ClearCacheAsync();
+            Settings.KnowledgeScanCompleted = false;
+            SaveSettings();
+            _host.ShowNotification(_loc.T("toast.knowledgeClearSuccess"));
+            return true;
+        }
+        catch (Exception ex)
+        {
+            _host.ShowNotification(string.Format(_loc.T("toast.knowledgeClearFailedReason"), ex.Message));
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Returns the full character roster so the settings page can show a
+    /// selection list before the scan starts.
+    /// </summary>
+    internal async Task<IReadOnlyList<CharacterInfo>> GetAllCharactersAsync()
+    {
+        var chars = (await _host.EntityService.LoadCharactersAsync()).ToList();
+        _charactersCache = chars;
+        return chars;
+    }
+
+    /// <summary>
+    /// Initial scan: caller selects which characters. Each selected character
+    /// is run against every scene in story order and the LLM decides presence.
+    /// </summary>
+    internal async Task RunKnowledgeScanAsync(
+        IReadOnlyList<CharacterInfo> selectedCharacters,
+        IProgress<KnowledgeScanProgress> progress,
+        CancellationToken cancellationToken)
+    {
+        if (_knowledgeService == null) return;
+        if (selectedCharacters.Count == 0) return;
+
+        var ordered = new List<(ChapterInfo Chapter, SceneInfo Scene)>();
+        foreach (var chapter in _host.ProjectService.GetChaptersOrdered())
+        {
+            foreach (var scene in _host.ProjectService.GetScenesForChapter(chapter.Guid))
+                ordered.Add((chapter, scene));
+        }
+
+        // LM Studio handles concurrent requests; Copilot CLI runs serial.
+        var parallelism = AiService.IsCopilotProvider ? 1 : Math.Max(1, Settings.MaxParallelPrompts);
+
+        await _knowledgeService.ScanAsync(
+            selectedCharacters,
+            ordered,
+            async (chapter, scene) => await _host.ProjectService.ReadSceneContentAsync(chapter.Guid, scene.Id),
+            progress,
+            cancellationToken,
+            parallelism);
+
+        Settings.KnowledgeScanCompleted = true;
+        SaveSettings();
     }
 
     public void Shutdown()
@@ -149,8 +265,26 @@ public sealed class AiAssistantExtension : IExtension, IRibbonContributor, ISide
                 IsActive = () => _isAnalysisVisible,
                 OnClick = ToggleStoryAnalysis,
                 Size = "Large",
+            },
+            new RibbonItem
+            {
+                Tab = "View",
+                Group = _loc.T("ribbon.aiGroup"),
+                Label = _loc.T("ribbon.characterChat"),
+                IconPath = IconUser,
+                Tooltip = _loc.T("ribbon.characterChatTooltip"),
+                IsToggle = true,
+                IsActive = () => _isCharacterChatVisible,
+                OnClick = ToggleCharacterChat,
+                Size = "Large",
             }
         ];
+    }
+
+    private void ToggleCharacterChat()
+    {
+        _isCharacterChatVisible = !_isCharacterChatVisible;
+        _host.ToggleRightSidebar("com.novalist.ai.characterChat");
     }
 
     private void ToggleAiChat()
@@ -185,6 +319,23 @@ public sealed class AiAssistantExtension : IExtension, IRibbonContributor, ISide
                 {
                     _chatVm ??= new AiChatViewModel(_host, this);
                     return new AiChatView { DataContext = _chatVm };
+                }
+            },
+            new SidebarPanel
+            {
+                Id = "com.novalist.ai.characterChat",
+                Label = _loc.T("ribbon.characterChat"),
+                IconPath = IconUser,
+                Side = "Context",
+                Tooltip = _loc.T("ribbon.characterChatTooltip"),
+                CreateView = () =>
+                {
+                    if (_characterChatVm == null)
+                    {
+                        _characterChatVm = new CharacterChatViewModel(_host, this, () => _knowledgeService);
+                        _ = _characterChatVm.ReloadAsync();
+                    }
+                    return new CharacterChatView { DataContext = _characterChatVm };
                 }
             }
         ];

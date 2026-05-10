@@ -5,7 +5,7 @@
   "version": "1.2.3",
   "author": "Novalist Team",
   "entryAssembly": "Novalist.Extensions.AiAssistant.dll",
-  "minHostVersion": "1.8.0",
+  "minHostVersion": "1.10.0",
   "maxHostVersion": "",
   "dependencies": [],
   "tags": ["ai", "analysis", "chat"]

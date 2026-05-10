@@ -1,0 +1,33 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:Novalist.Extensions.AiAssistant.ViewModels"
+             x:Class="Novalist.Extensions.AiAssistant.Views.KnowledgeScanView"
+             x:DataType="vm:KnowledgeScanViewModel"
+             Width="520">
+    <Border Background="Transparent" Padding="20">
+        <StackPanel Spacing="12">
+            <TextBlock Text="Initial character knowledge scan"
+                       FontSize="15"
+                       FontWeight="SemiBold" />
+            <TextBlock Text="The AI is reading every scene from each character's perspective. This runs once; future scenes are processed on demand."
+                       FontSize="12"
+                       Opacity="0.8"
+                       TextWrapping="Wrap" />
+
+            <ProgressBar Minimum="0" Maximum="1" Value="{Binding Progress}" Height="10" />
+            <TextBlock Text="{Binding Status}" FontSize="11" Opacity="0.7" TextWrapping="Wrap" />
+
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8">
+                <Button Content="Cancel"
+                        Command="{Binding CancelCommand}"
+                        IsVisible="{Binding IsRunning}"
+                        Padding="14,6" />
+                <Button Content="Close"
+                        Command="{Binding CloseCommand}"
+                        Classes="primary"
+                        IsVisible="{Binding IsComplete}"
+                        Padding="14,6" />
+            </StackPanel>
+        </StackPanel>
+    </Border>
+</UserControl>

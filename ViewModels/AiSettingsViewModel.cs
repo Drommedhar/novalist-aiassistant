@@ -1,6 +1,8 @@
 using System.Collections.ObjectModel;
+using System.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using Novalist.Extensions.AiAssistant.Services;
 using Novalist.Sdk.Models;
 using Novalist.Sdk.Services;
 
@@ -32,6 +34,40 @@ public partial class AiSettingsViewModel : ObservableObject
     [ObservableProperty] private bool _aiCheckSceneStats;
     [ObservableProperty] private bool _aiDisableRegexReferences;
     [ObservableProperty] private bool _aiGrammarCheckEnabled = true;
+    [ObservableProperty] private bool _aiEnableCharacterKnowledge;
+    [ObservableProperty] private bool _aiKnowledgeScanCompleted;
+    [ObservableProperty] private int _aiMaxParallelPrompts = 4;
+
+    // Scan flow:
+    //   "Idle" — show "Configure scan" button
+    //   "Selecting" — show character checklist + Start
+    //   "Running" — show progress overlay
+    //   "Done" — show summary
+    [ObservableProperty] private string _knowledgeScanState = "Idle";
+
+    [ObservableProperty] private ObservableCollection<CharacterSelectItem> _knowledgeCharacterChoices = [];
+
+    [ObservableProperty] private double _aiKnowledgeScanProgress;
+    [ObservableProperty] private string _aiKnowledgeScanOverallLine = string.Empty;
+    [ObservableProperty] private string _aiKnowledgeScanCountsLine = string.Empty;
+    [ObservableProperty] private string _aiKnowledgeScanEtaLine = string.Empty;
+    [ObservableProperty] private ObservableCollection<KnowledgeActiveLine> _aiKnowledgeScanActive = [];
+    [ObservableProperty] private string _aiKnowledgeScanFinalSummary = string.Empty;
+
+    public bool KnowledgeScanIdle => KnowledgeScanState == "Idle";
+    public bool KnowledgeScanSelecting => KnowledgeScanState == "Selecting";
+    public bool KnowledgeScanRunning => KnowledgeScanState == "Running";
+    public bool KnowledgeScanDone => KnowledgeScanState == "Done";
+
+    partial void OnKnowledgeScanStateChanged(string value)
+    {
+        OnPropertyChanged(nameof(KnowledgeScanIdle));
+        OnPropertyChanged(nameof(KnowledgeScanSelecting));
+        OnPropertyChanged(nameof(KnowledgeScanRunning));
+        OnPropertyChanged(nameof(KnowledgeScanDone));
+    }
+
+    private CancellationTokenSource? _scanCts;
     [ObservableProperty] private string _aiResponseLanguage = string.Empty;
     [ObservableProperty] private string _aiSystemPrompt = string.Empty;
     [ObservableProperty] private ObservableCollection<AiModelListItem> _availableAiModels = [];
@@ -79,6 +115,9 @@ public partial class AiSettingsViewModel : ObservableObject
         AiCheckSceneStats = ai.CheckSceneStats;
         AiDisableRegexReferences = ai.DisableRegexReferences;
         AiGrammarCheckEnabled = ai.GrammarCheckEnabled;
+        AiEnableCharacterKnowledge = ai.EnableCharacterKnowledge;
+        AiKnowledgeScanCompleted = ai.KnowledgeScanCompleted;
+        AiMaxParallelPrompts = ai.MaxParallelPrompts;
         AiResponseLanguage = ai.ResponseLanguage;
         AiSystemPrompt = ai.SystemPrompt;
         _isLoading = false;
@@ -109,8 +148,132 @@ public partial class AiSettingsViewModel : ObservableObject
     partial void OnAiCheckSceneStatsChanged(bool value) { Settings.CheckSceneStats = value; SaveAndNotify(); }
     partial void OnAiDisableRegexReferencesChanged(bool value) { Settings.DisableRegexReferences = value; SaveAndNotify(); }
     partial void OnAiGrammarCheckEnabledChanged(bool value) { Settings.GrammarCheckEnabled = value; SaveAndNotify(); }
+    partial void OnAiEnableCharacterKnowledgeChanged(bool value) { Settings.EnableCharacterKnowledge = value; SaveAndNotify(); }
+    partial void OnAiKnowledgeScanCompletedChanged(bool value) { Settings.KnowledgeScanCompleted = value; SaveAndNotify(); }
+    partial void OnAiMaxParallelPromptsChanged(int value) { Settings.MaxParallelPrompts = Math.Clamp(value, 1, 32); SaveAndNotify(); }
     partial void OnAiResponseLanguageChanged(string value) { Settings.ResponseLanguage = value; SaveAndNotify(); }
     partial void OnAiSystemPromptChanged(string value) { Settings.SystemPrompt = value; SaveAndNotify(); }
+
+    [RelayCommand]
+    private async Task BeginKnowledgeScanAsync()
+    {
+        if (KnowledgeScanState != "Idle" && KnowledgeScanState != "Done") return;
+
+        var characters = await _extension.GetAllCharactersAsync();
+        var items = new ObservableCollection<CharacterSelectItem>();
+        foreach (var c in characters.OrderBy(c => c.DisplayName, System.StringComparer.CurrentCultureIgnoreCase))
+            items.Add(new CharacterSelectItem(c) { IsSelected = true });
+        KnowledgeCharacterChoices = items;
+        KnowledgeScanState = "Selecting";
+    }
+
+    [RelayCommand]
+    private void CancelKnowledgeScanSelection()
+    {
+        KnowledgeScanState = "Idle";
+    }
+
+    [RelayCommand]
+    private void ToggleAllKnowledgeCharacters()
+    {
+        var anyUnselected = KnowledgeCharacterChoices.Any(c => !c.IsSelected);
+        foreach (var c in KnowledgeCharacterChoices) c.IsSelected = anyUnselected;
+    }
+
+    [RelayCommand]
+    private async Task StartKnowledgeScanAsync()
+    {
+        var selected = KnowledgeCharacterChoices.Where(c => c.IsSelected).Select(c => c.Source).ToList();
+        if (selected.Count == 0) return;
+
+        KnowledgeScanState = "Running";
+        AiKnowledgeScanProgress = 0;
+        AiKnowledgeScanOverallLine = string.Empty;
+        AiKnowledgeScanCountsLine = string.Empty;
+        AiKnowledgeScanEtaLine = string.Empty;
+        AiKnowledgeScanActive.Clear();
+        AiKnowledgeScanFinalSummary = string.Empty;
+
+        _scanCts?.Cancel();
+        _scanCts = new CancellationTokenSource();
+
+        var progress = new System.Progress<KnowledgeScanProgress>(p =>
+        {
+            AiKnowledgeScanProgress = p.OverallFraction;
+            AiKnowledgeScanOverallLine = string.Format(_loc.T("settings.knowledgeProgressOverall"),
+                p.OverallDone, p.OverallTotal);
+            AiKnowledgeScanCountsLine = string.Format(_loc.T("settings.knowledgeProgressCounts"),
+                p.StoredPresent, p.StoredAbsent, p.Reused);
+            AiKnowledgeScanEtaLine = string.Format(_loc.T("settings.knowledgeProgressEta"),
+                p.EstimatedRemainingMs > 0 ? FormatDuration(p.EstimatedRemainingMs) : "—",
+                FormatDuration(p.ElapsedMs),
+                p.AverageStepMs > 0 ? FormatDuration(p.AverageStepMs) : "—");
+
+            // Refresh active-slot lines in place so existing rows that still
+            // match keep their identity (less UI churn).
+            var fmt = _loc.T("settings.knowledgeActiveLine");
+            var newLines = p.ActiveSlots.Select(s => new KnowledgeActiveLine
+            {
+                Display = string.Format(fmt, s.CharacterName, s.ChapterTitle, s.SceneTitle)
+            }).ToList();
+            // Simple replace — list is short (≤ parallelism).
+            AiKnowledgeScanActive.Clear();
+            foreach (var line in newLines) AiKnowledgeScanActive.Add(line);
+        });
+
+        try
+        {
+            await _extension.RunKnowledgeScanAsync(selected, progress, _scanCts.Token);
+            AiKnowledgeScanCompleted = true;
+            AiKnowledgeScanFinalSummary = _loc.T("settings.knowledgeScanComplete");
+            KnowledgeScanState = "Done";
+        }
+        catch (System.OperationCanceledException)
+        {
+            AiKnowledgeScanFinalSummary = _loc.T("settings.knowledgeScanCancelled");
+            KnowledgeScanState = "Done";
+        }
+        catch (System.Exception ex)
+        {
+            AiKnowledgeScanFinalSummary = ex.Message;
+            KnowledgeScanState = "Done";
+        }
+    }
+
+    [RelayCommand]
+    private void CancelKnowledgeScanRunning()
+    {
+        _scanCts?.Cancel();
+    }
+
+    [RelayCommand]
+    private void CloseKnowledgeScanResult()
+    {
+        KnowledgeScanState = "Idle";
+    }
+
+    [RelayCommand]
+    private async Task ClearKnowledgeCacheAsync()
+    {
+        await _extension.ClearKnowledgeCacheAsync();
+        AiKnowledgeScanCompleted = false;
+        AiKnowledgeScanFinalSummary = _loc.T("settings.knowledgeCacheCleared");
+        AiKnowledgeScanOverallLine = string.Empty;
+        AiKnowledgeScanCountsLine = string.Empty;
+        AiKnowledgeScanEtaLine = string.Empty;
+        AiKnowledgeScanActive.Clear();
+        AiKnowledgeScanProgress = 0;
+    }
+
+    private static string FormatDuration(long ms)
+    {
+        if (ms <= 0) return "—";
+        var ts = System.TimeSpan.FromMilliseconds(ms);
+        if (ts.TotalHours >= 1) return $"{(int)ts.TotalHours}h {ts.Minutes:D2}m";
+        if (ts.TotalMinutes >= 1) return $"{ts.Minutes}m {ts.Seconds:D2}s";
+        if (ts.TotalSeconds >= 1) return $"{(int)ts.TotalSeconds}s";
+        return $"{ms}ms";
+    }
 
     [RelayCommand]
     private async Task TestAiConnectionAsync()
@@ -175,6 +338,23 @@ public partial class AiSettingsViewModel : ObservableObject
             AiServerStatus = string.Empty;
         }
     }
+}
+
+public sealed class KnowledgeActiveLine
+{
+    public string Display { get; init; } = string.Empty;
+}
+
+public partial class CharacterSelectItem : ObservableObject
+{
+    public CharacterInfo Source { get; }
+    public string DisplayName => Source.DisplayName;
+    public string Role => Source.Role;
+
+    [ObservableProperty]
+    private bool _isSelected = true;
+
+    public CharacterSelectItem(CharacterInfo source) { Source = source; }
 }
 
 public sealed class AiModelListItem(string key, string displayName, long sizeBytes)

@@ -1,0 +1,126 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:Novalist.Extensions.AiAssistant.ViewModels"
+             x:Class="Novalist.Extensions.AiAssistant.Views.CharacterChatView"
+             x:DataType="vm:CharacterChatViewModel">
+    <Grid RowDefinitions="Auto,Auto,*,Auto,Auto"
+          ClipToBounds="True">
+
+        <!-- Character + scene picker -->
+        <StackPanel Grid.Row="0" Spacing="4" Margin="8,8,8,4">
+            <TextBlock Text="{Binding Loc[characterChat.character]}" FontSize="11" Opacity="0.7" />
+            <ComboBox ItemsSource="{Binding Characters}"
+                      SelectedItem="{Binding SelectedCharacter, Mode=TwoWay}"
+                      HorizontalAlignment="Stretch">
+                <ComboBox.ItemTemplate>
+                    <DataTemplate>
+                        <TextBlock Text="{Binding DisplayName}" />
+                    </DataTemplate>
+                </ComboBox.ItemTemplate>
+            </ComboBox>
+
+            <TextBlock Text="{Binding Loc[characterChat.sceneContext]}" FontSize="11" Opacity="0.7" Margin="0,4,0,0" />
+            <ComboBox ItemsSource="{Binding Scenes}"
+                      SelectedItem="{Binding SelectedScene, Mode=TwoWay}"
+                      HorizontalAlignment="Stretch">
+                <ComboBox.ItemTemplate>
+                    <DataTemplate>
+                        <TextBlock Text="{Binding DisplayLabel}" />
+                    </DataTemplate>
+                </ComboBox.ItemTemplate>
+            </ComboBox>
+
+            <CheckBox Content="{Binding Loc[characterChat.includeKnowledge]}"
+                      IsChecked="{Binding IncludeSceneKnowledge, Mode=TwoWay}"
+                      Margin="0,4,0,0" />
+            <CheckBox Content="{Binding Loc[characterChat.includeImage]}"
+                      ToolTip.Tip="{Binding Loc[characterChat.includeImageTooltip]}"
+                      IsChecked="{Binding IncludeCharacterImage, Mode=TwoWay}" />
+        </StackPanel>
+
+        <!-- Knowledge preparation progress -->
+        <Border Grid.Row="1"
+                IsVisible="{Binding IsPreparingKnowledge}"
+                Background="{DynamicResource CardBackground}"
+                Padding="8,6">
+            <StackPanel Spacing="4">
+                <TextBlock Text="{Binding Loc[characterChat.preparing]}" FontSize="11" />
+                <ProgressBar Minimum="0" Maximum="1" Value="{Binding PreparationProgress}" />
+                <TextBlock Text="{Binding PreparationStatus}" FontSize="10" Opacity="0.7" />
+            </StackPanel>
+        </Border>
+
+        <!-- Chat transcript — clipped to its row -->
+        <ScrollViewer Grid.Row="2"
+                      x:Name="ChatScroll"
+                      MinHeight="0"
+                      VerticalScrollBarVisibility="Auto"
+                      HorizontalScrollBarVisibility="Disabled"
+                      ClipToBounds="True">
+            <!-- Padding lives on the inner StackPanel so it counts toward
+                 the scroll extent (ScrollViewer.Padding does not). -->
+            <StackPanel Spacing="8" Margin="8,8,8,16">
+                <ItemsControl ItemsSource="{Binding Turns}">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate DataType="vm:CharacterChatTurn">
+                            <Border Padding="10,8"
+                                    Margin="0,0,0,4"
+                                    CornerRadius="6"
+                                    Background="{DynamicResource CardBackground}">
+                                <StackPanel Spacing="2">
+                                    <TextBlock Text="{Binding SpeakerName}"
+                                               FontWeight="SemiBold"
+                                               FontSize="11"
+                                               Opacity="0.8" />
+                                    <SelectableTextBlock Text="{Binding Content}"
+                                                         TextWrapping="Wrap"
+                                                         FontSize="12.5" />
+                                </StackPanel>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+                <Border IsVisible="{Binding IsGenerating}"
+                        Padding="10,8"
+                        CornerRadius="6"
+                        Background="{DynamicResource CardBackground}">
+                    <SelectableTextBlock Text="{Binding StreamingResponse}"
+                                         TextWrapping="Wrap"
+                                         FontSize="12.5" />
+                </Border>
+            </StackPanel>
+        </ScrollViewer>
+
+        <!-- Input -->
+        <TextBox Grid.Row="3"
+                 Text="{Binding UserInput, Mode=TwoWay}"
+                 Watermark="{Binding Loc[characterChat.inputWatermark]}"
+                 AcceptsReturn="True"
+                 TextWrapping="Wrap"
+                 MinHeight="60"
+                 MaxHeight="160"
+                 Margin="8,4,8,4" />
+
+        <!-- Action row: Reset on left, Send/Stop on right -->
+        <Grid Grid.Row="4"
+              ColumnDefinitions="Auto,*,Auto,Auto"
+              Margin="8,0,8,8">
+            <Button Grid.Column="0"
+                    Content="{Binding Loc[characterChat.reset]}"
+                    Command="{Binding ResetChatCommand}"
+                    Padding="10,6"
+                    FontSize="11" />
+            <Button Grid.Column="2"
+                    Content="{Binding Loc[characterChat.stop]}"
+                    Command="{Binding CancelCommand}"
+                    Padding="12,6"
+                    Margin="0,0,6,0"
+                    IsVisible="{Binding IsGenerating}" />
+            <Button Grid.Column="3"
+                    Content="{Binding Loc[characterChat.send]}"
+                    Command="{Binding SendCommand}"
+                    Classes="primary"
+                    Padding="14,6" />
+        </Grid>
+    </Grid>
+</UserControl>

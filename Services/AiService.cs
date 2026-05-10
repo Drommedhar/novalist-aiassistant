@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.IO;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
@@ -30,10 +31,27 @@ public class AiService : IAiService
 
     private CancellationTokenSource? _cts;
 
+    // Serialise model-load checks so concurrent GenerateChatAsync calls don't
+    // each issue their own load request (which causes LM Studio to spawn one
+    // model instance per concurrent request).
+    private readonly SemaphoreSlim _ensureLock = new(1, 1);
+    private string? _ensuredModel;
+    private int _ensuredContextLength = -1;
+
     private bool IsCopilot => _provider == "copilot";
+    public bool IsCopilotProvider => IsCopilot;
 
     public void Configure(AiSettings settings)
     {
+        // Invalidate the ensure-cache when relevant fields change so a fresh
+        // probe runs on the next request.
+        if (_provider != settings.Provider || _baseUrl != settings.LmStudioBaseUrl.TrimEnd('/')
+            || _model != settings.LmStudioModel || _contextLength != settings.ContextLength)
+        {
+            _ensuredModel = null;
+            _ensuredContextLength = -1;
+        }
+
         _provider = settings.Provider;
         _baseUrl = settings.LmStudioBaseUrl.TrimEnd('/');
         _model = settings.LmStudioModel;
@@ -120,11 +138,73 @@ public class AiService : IAiService
         }
     }
 
+    private static object BuildMessagePayload(AiChatMessage m)
+    {
+        // Plain string content when no images attached.
+        if (m.ImagePaths == null || m.ImagePaths.Count == 0)
+            return new { role = m.Role, content = m.Content };
+
+        // Multimodal content array (OpenAI / LM Studio vision format).
+        var parts = new List<object>();
+        if (!string.IsNullOrEmpty(m.Content))
+            parts.Add(new { type = "text", text = m.Content });
+
+        foreach (var imagePath in m.ImagePaths)
+        {
+            try
+            {
+                if (!File.Exists(imagePath))
+                {
+                    Debug.WriteLine($"[AiService] Image not found, skipping: {imagePath}");
+                    continue;
+                }
+                var bytes = File.ReadAllBytes(imagePath);
+                var b64 = Convert.ToBase64String(bytes);
+                var mime = GuessImageMime(imagePath);
+                parts.Add(new
+                {
+                    type = "image_url",
+                    image_url = new { url = $"data:{mime};base64,{b64}" }
+                });
+                Debug.WriteLine($"[AiService] Attached image to {m.Role} message: {imagePath} ({bytes.Length} bytes, {mime})");
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[AiService] Failed to attach image {imagePath}: {ex.Message}");
+            }
+        }
+
+        return new { role = m.Role, content = parts.ToArray() };
+    }
+
+    private static string GuessImageMime(string path)
+    {
+        var ext = System.IO.Path.GetExtension(path).ToLowerInvariant();
+        return ext switch
+        {
+            ".png" => "image/png",
+            ".gif" => "image/gif",
+            ".webp" => "image/webp",
+            ".bmp" => "image/bmp",
+            _ => "image/jpeg"
+        };
+    }
+
     public async Task EnsureModelLoadedAsync()
     {
         if (string.IsNullOrEmpty(_model)) return;
+
+        // Fast path: already verified for this (model, contextLength) — no I/O.
+        if (_ensuredModel == _model && _ensuredContextLength == _contextLength)
+            return;
+
+        await _ensureLock.WaitAsync().ConfigureAwait(false);
         try
         {
+            // Re-check inside the lock; another caller may have just done the
+            // load while we were waiting.
+            if (_ensuredModel == _model && _ensuredContextLength == _contextLength)
+                return;
             using var req = new HttpRequestMessage(HttpMethod.Get, $"{_baseUrl}/api/v1/models");
             AddAuth(req);
             using var res = await SharedClient.SendAsync(req).ConfigureAwait(false);
@@ -174,10 +254,17 @@ public class AiService : IAiService
 
             if (needsLoad)
                 await LoadModelAsync().ConfigureAwait(false);
+
+            _ensuredModel = _model;
+            _ensuredContextLength = _contextLength;
         }
         catch
         {
             // Best-effort — proceed even if we can't verify load state
+        }
+        finally
+        {
+            _ensureLock.Release();
         }
     }
 
@@ -223,7 +310,7 @@ public class AiService : IAiService
         var body = new Dictionary<string, object>
         {
             ["model"] = _model,
-            ["messages"] = messages.Select(m => new { role = m.Role, content = m.Content }).ToArray(),
+            ["messages"] = messages.Select(BuildMessagePayload).ToArray(),
             ["stream"] = true,
             ["temperature"] = temperature ?? _temperature,
             ["top_p"] = _topP,
