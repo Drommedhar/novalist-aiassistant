@@ -64,7 +64,7 @@
     "knowledgeClearCache": "Cache leeren",
     "knowledgeCacheCleared": "Wissens-Cache geleert.",
     "knowledgeMaxParallel": "Max. parallele Prompts",
-    "knowledgeMaxParallelDesc": "Wert ≤ Anzahl paralleler Slots des LM Studio-Modells setzen. Der Host serialisiert Modell-Lade-Checks, damit parallele Anfragen dieselbe geladene Instanz wiederverwenden.",
+    "knowledgeMaxParallelDesc": "Gilt für alle KI-Stapeloperationen (Story-Analyse, Charakterwissens-Scan, Charakter-Chat). Wert ≤ Anzahl paralleler Slots des LM Studio-Modells setzen. Der Host serialisiert Modell-Lade-Checks, damit parallele Anfragen dieselbe geladene Instanz wiederverwenden. Beim Copilot-Anbieter ignoriert (auf 1 erzwungen).",
     "knowledgeScanDone": "Scan abgeschlossen",
     "knowledgeScanStarting": "Scan startet...",
     "knowledgeScanCancelled": "Scan abgebrochen.",
@@ -91,6 +91,26 @@
     "knowledgeClearSuccess": "Wissens-Cache geleert.",
     "knowledgeClearFailed": "Wissens-Cache konnte nicht geleert werden.",
     "knowledgeClearFailedReason": "Wissens-Cache leeren fehlgeschlagen: {0}"
+  },
+  "inline": {
+    "rewrite": "Umschreiben",
+    "expand": "Erweitern",
+    "shorten": "Kürzen",
+    "describe": "Beschreiben",
+    "showDontTell": "Zeigen statt erzählen",
+    "brainstorm": "Fortsetzung brainstormen",
+    "brainstorm3": "Brainstorm: 3 Optionen",
+    "noSelection": "Kein Text ausgewählt.",
+    "emptyResult": "Das Modell hat keinen Text zurückgegeben."
+  },
+  "contextMenu": {
+    "generateSynopsis": "Synopsis generieren (KI)"
+  },
+  "synopsis": {
+    "emptyScene": "Szene ist leer — nichts zu zusammenfassen.",
+    "emptyResult": "Synopsis-Generierung lieferte leeres Ergebnis.",
+    "success": "Synopsis aktualisiert.",
+    "failedReason": "Synopsis-Generierung fehlgeschlagen: {0}"
   },
   "ai": {
     "chatTitle": "KI-Chat",

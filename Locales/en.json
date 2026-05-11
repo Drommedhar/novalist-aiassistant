@@ -66,7 +66,7 @@
     "knowledgeClearCache": "Clear cache",
     "knowledgeCacheCleared": "Knowledge cache cleared.",
     "knowledgeMaxParallel": "Max parallel prompts",
-    "knowledgeMaxParallelDesc": "Set this to ≤ the LM Studio model's parallel-request slot count. The host serialises model-load probes so concurrent requests reuse the same loaded instance.",
+    "knowledgeMaxParallelDesc": "Applies to every batch AI operation (story analysis, character knowledge scan, character chat). Set this to ≤ the LM Studio model's parallel-request slot count. The host serialises model-load probes so concurrent requests reuse the same loaded instance. Ignored when the Copilot provider is selected (forced to 1).",
     "knowledgeScanDone": "Scan complete",
     "knowledgeScanStarting": "Starting scan...",
     "knowledgeScanCancelled": "Scan cancelled.",
@@ -93,6 +93,26 @@
     "knowledgeClearSuccess": "Knowledge cache cleared.",
     "knowledgeClearFailed": "Knowledge cache could not be cleared.",
     "knowledgeClearFailedReason": "Knowledge cache clear failed: {0}"
+  },
+  "inline": {
+    "rewrite": "Rewrite",
+    "expand": "Expand",
+    "shorten": "Shorten",
+    "describe": "Describe",
+    "showDontTell": "Show, don't tell",
+    "brainstorm": "Brainstorm continuation",
+    "brainstorm3": "Brainstorm: 3 options",
+    "noSelection": "No text selected.",
+    "emptyResult": "The model returned no text."
+  },
+  "contextMenu": {
+    "generateSynopsis": "Generate synopsis (AI)"
+  },
+  "synopsis": {
+    "emptyScene": "Scene is empty — nothing to summarize.",
+    "emptyResult": "Synopsis generation returned empty.",
+    "success": "Synopsis updated.",
+    "failedReason": "Synopsis generation failed: {0}"
   },
   "ai": {
     "chatTitle": "AI Chat",

@@ -9,7 +9,7 @@ using Novalist.Sdk.Services;
 
 namespace Novalist.Extensions.AiAssistant;
 
-public sealed class AiAssistantExtension : IExtension, IRibbonContributor, ISidebarContributor, IContentViewContributor, ISettingsContributor, IGrammarCheckContributor
+public sealed class AiAssistantExtension : IExtension, IRibbonContributor, ISidebarContributor, IContentViewContributor, ISettingsContributor, IGrammarCheckContributor, IContextMenuContributor
 {
     public string Id => "com.novalist.ai";
     public string DisplayName => "AI Assistant";
@@ -24,6 +24,8 @@ public sealed class AiAssistantExtension : IExtension, IRibbonContributor, ISide
     private AiGrammarCheckService? _grammarCheckService;
     private CharacterKnowledgeService? _knowledgeService;
     private KnowledgeBuilder? _knowledgeBuilder;
+    private InlineRewriteService? _inlineRewriteService;
+    private SceneSynopsisService? _synopsisService;
 
     private AiChatViewModel? _chatVm;
     private CharacterChatViewModel? _characterChatVm;
@@ -76,6 +78,12 @@ public sealed class AiAssistantExtension : IExtension, IRibbonContributor, ISide
 
         _knowledgeBuilder = new KnowledgeBuilder(AiService);
         _knowledgeService = new CharacterKnowledgeService(host, _knowledgeBuilder, Id);
+
+        _inlineRewriteService = new InlineRewriteService(AiService, host, _loc);
+        System.Diagnostics.Debug.WriteLine($"[InlineActions] AiAssistant registering inline contributor. Actions: {string.Join(",", _inlineRewriteService.GetInlineActions().Select(a => a.Id))}");
+        host.RegisterInlineActionContributor(_inlineRewriteService);
+
+        _synopsisService = new SceneSynopsisService(AiService, host, _loc);
 
         host.LanguageChanged += OnLanguageChanged;
         host.SceneOpened += scene =>
@@ -235,6 +243,25 @@ public sealed class AiAssistantExtension : IExtension, IRibbonContributor, ISide
         if (string.IsNullOrWhiteSpace(Settings.ResponseLanguage))
             AiService.LanguageName = _host.CurrentLanguageDisplayName;
     }
+
+    // ── IContextMenuContributor ─────────────────────────────────────
+
+    public IReadOnlyList<ContextMenuItem> GetContextMenuItems() =>
+    [
+        new ContextMenuItem
+        {
+            Context = "Scene",
+            Icon = string.Empty,
+            Label = _loc.T("contextMenu.generateSynopsis"),
+            OnClick = ctx =>
+            {
+                if (ctx is SceneInfo s && _synopsisService != null)
+                {
+                    _ = _synopsisService.GenerateAndSaveAsync(s.ChapterGuid, s.Id);
+                }
+            },
+        },
+    ];
 
     // ── IRibbonContributor ──────────────────────────────────────────
 

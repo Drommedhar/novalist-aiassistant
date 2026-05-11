@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Text;
+using System.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Novalist.Sdk.Models;
@@ -136,47 +137,74 @@ public partial class StoryAnalysisViewModel : ObservableObject
                 ProgressCurrent = 0;
             });
 
-            foreach (var (s, text) in sceneTexts)
+            var parallelism = _extension.AiService.IsCopilotProvider
+                ? 1
+                : Math.Max(1, _extension.Settings.MaxParallelPrompts);
+            var useStreaming = parallelism == 1;
+            var gate = new SemaphoreSlim(parallelism, parallelism);
+
+            var sceneTasks = sceneTexts.Select(async pair =>
             {
-                _host.PostToUI(() =>
+                var (s, text) = pair;
+                await gate.WaitAsync(_cts.Token).ConfigureAwait(false);
+                try
                 {
-                    StreamingLog = string.Empty;
-                    StreamingThinking = string.Empty;
-                    ProgressText = _loc.T("ai.analysingScene", s.Title);
-                });
+                    _cts.Token.ThrowIfCancellationRequested();
 
-                lock (_streamLock)
-                {
-                    _pendingLog.Clear();
-                    _pendingThinking.Clear();
+                    if (useStreaming)
+                    {
+                        _host.PostToUI(() =>
+                        {
+                            StreamingLog = string.Empty;
+                            StreamingThinking = string.Empty;
+                            ProgressText = _loc.T("ai.analysingScene", s.Title);
+                        });
+                        lock (_streamLock)
+                        {
+                            _pendingLog.Clear();
+                            _pendingThinking.Clear();
+                        }
+                    }
+                    else
+                    {
+                        _host.PostToUI(() =>
+                            ProgressText = _loc.T("ai.analysingScene", s.Title));
+                    }
+
+                    var context = new ChapterContext
+                    {
+                        ChapterName = chapter.Title,
+                        SceneName = s.Title,
+                        Date = chapter.Date,
+                    };
+
+                    var result = await _extension.AiService.AnalyseChapterWholeAsync(
+                        text, entities,
+                        null, context, checks,
+                        useStreaming ? OnStreamingChunk : null,
+                        useStreaming ? OnThinkingChunk : null,
+                        settings.DisableRegexReferences,
+                        _cts.Token).ConfigureAwait(false);
+
+                    if (useStreaming)
+                        _host.PostToUI(FlushStreamingBuffers);
+
+                    var items = result.Findings
+                        .Select(f => new AnalysisFindingItem(f, chapter.Title, s.Title))
+                        .ToList();
+                    _host.PostToUI(() =>
+                    {
+                        foreach (var item in items) AllFindings.Add(item);
+                        ProgressCurrent++;
+                    });
                 }
-
-                var context = new ChapterContext
+                finally
                 {
-                    ChapterName = chapter.Title,
-                    SceneName = s.Title,
-                    Date = chapter.Date,
-                };
-
-                var result = await _extension.AiService.AnalyseChapterWholeAsync(
-                    text, entities,
-                    null, context, checks,
-                    OnStreamingChunk,
-                    OnThinkingChunk,
-                    settings.DisableRegexReferences,
-                    _cts.Token).ConfigureAwait(false);
-
-                // Flush any remaining buffered streaming output
-                _host.PostToUI(FlushStreamingBuffers);
-
-                foreach (var f in result.Findings)
-                {
-                    var item = new AnalysisFindingItem(f, chapter.Title, s.Title);
-                    _host.PostToUI(() => AllFindings.Add(item));
+                    gate.Release();
                 }
+            }).ToList();
 
-                _host.PostToUI(() => ProgressCurrent++);
-            }
+            await Task.WhenAll(sceneTasks).ConfigureAwait(false);
 
             _host.PostToUI(() =>
             {
@@ -383,14 +411,7 @@ public sealed class AnalysisFindingItem
         ChapterName = chapterName;
         SceneName = sceneName;
 
-        TypeIcon = Type switch
-        {
-            "reference" => "🔗",
-            "inconsistency" => "⚠",
-            "suggestion" => "💡",
-            "scene_stats" => "📊",
-            _ => "•",
-        };
+        TypeIcon = string.Empty;
 
         ScenePov = finding.ScenePov;
         SceneEmotion = finding.SceneEmotion;
