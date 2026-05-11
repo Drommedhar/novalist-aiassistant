@@ -137,7 +137,9 @@ public sealed class CharacterKnowledgeService
         var hash = HashContent(sceneText);
 
         var existing = file.Scenes.FirstOrDefault(s => string.Equals(s.SceneId, scene.Id, StringComparison.OrdinalIgnoreCase));
-        if (existing != null && string.Equals(existing.SceneContentHash, hash, StringComparison.Ordinal))
+        if (existing != null
+            && string.Equals(existing.SceneContentHash, hash, StringComparison.Ordinal)
+            && existing.SchemaVersion >= CharacterSceneKnowledge.CurrentSchemaVersion)
             return existing;
 
         // No alias prefilter — let the LLM decide whether the character is
@@ -219,6 +221,10 @@ public sealed class CharacterKnowledgeService
     private static void AppendEntry(StringBuilder sb, CharacterSceneKnowledge e)
     {
         sb.Append("### ").Append(e.ChapterTitle).Append(" / ").AppendLine(e.SceneTitle);
+        if (!string.IsNullOrWhiteSpace(e.Location))
+            sb.Append("Location: ").AppendLine(e.Location);
+        if (e.Companions.Count > 0)
+            sb.Append("With: ").AppendLine(string.Join(", ", e.Companions));
         if (e.Observed.Count > 0)
         {
             sb.AppendLine("Observed:");
@@ -239,6 +245,30 @@ public sealed class CharacterKnowledgeService
             sb.AppendLine("Uncertain:");
             foreach (var o in e.Uncertain) sb.Append("- ").AppendLine(o);
         }
+        if (e.Secrets.Count > 0)
+        {
+            sb.AppendLine("Secrets:");
+            foreach (var o in e.Secrets) sb.Append("- ").AppendLine(o);
+        }
+        if (e.RelationshipChanges.Count > 0)
+        {
+            sb.AppendLine("Relationship shifts:");
+            foreach (var o in e.RelationshipChanges) sb.Append("- ").AppendLine(o);
+        }
+        if (e.InventoryChanges.Count > 0)
+        {
+            sb.AppendLine("Inventory:");
+            foreach (var o in e.InventoryChanges) sb.Append("- ").AppendLine(o);
+        }
+        if (e.Goals.Count > 0)
+        {
+            sb.AppendLine("Goals:");
+            foreach (var o in e.Goals) sb.Append("- ").AppendLine(o);
+        }
+        if (!string.IsNullOrWhiteSpace(e.PhysicalState))
+            sb.Append("Physical state: ").AppendLine(e.PhysicalState);
+        if (!string.IsNullOrWhiteSpace(e.VoiceNotes))
+            sb.Append("Voice / manner: ").AppendLine(e.VoiceNotes);
         if (!string.IsNullOrWhiteSpace(e.Emotion))
             sb.Append("Emotion: ").AppendLine(e.Emotion);
         sb.AppendLine();
@@ -355,7 +385,9 @@ public sealed class CharacterKnowledgeService
                         }
                         finally { fileLock.Release(); }
 
-                        if (existing != null && string.Equals(existing.SceneContentHash, hash, StringComparison.Ordinal))
+                        if (existing != null
+                            && string.Equals(existing.SceneContentHash, hash, StringComparison.Ordinal)
+                            && existing.SchemaVersion >= CharacterSceneKnowledge.CurrentSchemaVersion)
                         {
                             lock (sessionStart)
                             {

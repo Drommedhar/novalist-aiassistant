@@ -34,8 +34,9 @@ public sealed class KnowledgeBuilder
         You analyse novel scenes from the perspective of a single character. Read
         the scene and decide whether the character "{{character.DisplayName}}" is
         actually present and active in it (not merely mentioned in someone else's
-        thoughts, dialogue, or narration). If they are present, extract ONLY what
-        they personally experienced, learned, or said.
+        thoughts, dialogue, or narration). If they are present, extract a DEEP
+        record of what they personally experienced — enough that another AI could
+        later impersonate the character with full continuity.
 
         Output STRICT JSON matching this schema (no prose, no fences):
         {
@@ -44,18 +45,35 @@ public sealed class KnowledgeBuilder
           "learned": ["..."],
           "said": ["..."],
           "emotion": "...",
-          "uncertain": ["..."]
+          "uncertain": ["..."],
+          "location": "...",
+          "companions": ["..."],
+          "physicalState": "...",
+          "goals": ["..."],
+          "relationshipChanges": ["..."],
+          "secrets": ["..."],
+          "voiceNotes": "...",
+          "inventoryChanges": ["..."]
         }
 
         Rules:
         - "present" = true ONLY if the character is physically/virtually in the scene OR is the POV/narrator. Set false when they are only mentioned, remembered, or talked about by others.
         - When "present" is false, set every other field to empty ([] or "").
-        - "observed" = things the character saw / heard directly in the scene.
+        - "observed" = things the character saw / heard / felt directly.
         - "learned" = facts they were told or deduced.
         - "said" = statements they made (intent, claims, lies). Use direct paraphrase.
         - "emotion" = single short phrase describing their emotional state at end of scene.
         - "uncertain" = open questions or things the character is unsure of.
-        - Be concise: each bullet a single short sentence.
+        - "location" = where they physically are during the scene.
+        - "companions" = other named characters present with them.
+        - "physicalState" = injuries, exhaustion, intoxication, illness, ability to speak/move, etc. by end of scene.
+        - "goals" = short-term intentions they hold when the scene ends.
+        - "relationshipChanges" = how feelings/trust toward others shifted in this scene (one entry per relationship).
+        - "secrets" = secrets they protected, revealed, learned, or now must keep.
+        - "voiceNotes" = how they speak/move in this scene — dialect, tone, mannerisms, whether they can speak at all.
+        - "inventoryChanges" = items gained, lost, used, or now carrying.
+        - Be specific and grounded in the actual scene text. Do not invent facts. If a field has nothing for this scene, return [] or "".
+        - Each bullet should be a single short sentence.
         - Respond in {{_ai.LanguageName}}.
         """;
 
@@ -122,8 +140,23 @@ public sealed class KnowledgeBuilder
             k.Learned = ReadStringArray(root, "learned");
             k.Said = ReadStringArray(root, "said");
             k.Uncertain = ReadStringArray(root, "uncertain");
-            if (root.TryGetProperty("emotion", out var em))
-                k.Emotion = em.ValueKind == JsonValueKind.String ? em.GetString() ?? string.Empty : string.Empty;
+            k.Companions = ReadStringArray(root, "companions");
+            k.Goals = ReadStringArray(root, "goals");
+            k.RelationshipChanges = ReadStringArray(root, "relationshipChanges");
+            k.Secrets = ReadStringArray(root, "secrets");
+            k.InventoryChanges = ReadStringArray(root, "inventoryChanges");
+
+            string ReadStr(string name)
+            {
+                if (!root.TryGetProperty(name, out var v)) return string.Empty;
+                return v.ValueKind == JsonValueKind.String ? v.GetString() ?? string.Empty : string.Empty;
+            }
+            k.Emotion = ReadStr("emotion");
+            k.Location = ReadStr("location");
+            k.PhysicalState = ReadStr("physicalState");
+            k.VoiceNotes = ReadStr("voiceNotes");
+
+            k.SchemaVersion = CharacterSceneKnowledge.CurrentSchemaVersion;
 
             // Heuristic fallback: if model omitted "present" but content is empty,
             // treat as not present.

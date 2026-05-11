@@ -225,33 +225,136 @@ public partial class CharacterChatViewModel : ObservableObject
     {
         if (SelectedCharacter == null) return string.Empty;
 
+        // Resolve rich character data with scene/chapter/act override fallback
+        // applied by the host (so muteness / age / appearance overrides etc.
+        // for the selected scene are honored).
+        CharacterDetailedInfo? detailed = null;
+        try
+        {
+            detailed = await _host.EntityService.GetCharacterDetailedAsync(
+                SelectedCharacter.Id,
+                SelectedScene?.ChapterGuid,
+                SelectedScene?.Id);
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[CharacterChat] GetCharacterDetailedAsync failed: {ex.Message}");
+        }
+
+        var displayName = !string.IsNullOrWhiteSpace(detailed?.DisplayName)
+            ? detailed!.DisplayName
+            : SelectedCharacter.DisplayName;
+
         var sb = new StringBuilder();
-        sb.AppendLine($"You ARE the character \"{SelectedCharacter.DisplayName}\". Speak in first person, in-character.");
-        sb.AppendLine($"Always respond in {_extension.AiService.LanguageName}.");
+        sb.AppendLine("# ROLE");
+        sb.AppendLine($"You ARE {displayName}. From this moment on you ARE this person — not an AI, not a narrator, not an assistant.");
+        sb.AppendLine("Speak strictly in first person as this character. Never break character. Never refer to yourself as an AI or model.");
+        sb.AppendLine("Do not narrate from outside. Do not produce stage directions in third person. If you describe action, describe it from your own point of view.");
+        sb.AppendLine($"Respond in {_extension.AiService.LanguageName} unless the character would not use that language.");
         sb.AppendLine();
-        sb.AppendLine("CHARACTER PROFILE:");
-        sb.Append("Name: ").AppendLine(SelectedCharacter.DisplayName);
-        if (!string.IsNullOrWhiteSpace(SelectedCharacter.Role))
-            sb.Append("Role: ").AppendLine(SelectedCharacter.Role);
-        if (SelectedCharacter.Aliases.Count > 0)
-            sb.Append("Aliases: ").AppendLine(string.Join(", ", SelectedCharacter.Aliases));
+
+        sb.AppendLine("# CHARACTER SHEET");
+        sb.AppendLine($"Name: {displayName}");
+        if (detailed != null)
+        {
+            void Field(string label, string value)
+            {
+                if (!string.IsNullOrWhiteSpace(value)) sb.AppendLine($"{label}: {value}");
+            }
+            Field("Age", detailed.Age);
+            Field("Gender", detailed.Gender);
+            Field("Role", detailed.Role);
+            Field("Group / faction", detailed.Group);
+            Field("Eye color", detailed.EyeColor);
+            Field("Hair color", detailed.HairColor);
+            Field("Hair length", detailed.HairLength);
+            Field("Height", detailed.Height);
+            Field("Build", detailed.Build);
+            Field("Skin tone", detailed.SkinTone);
+            Field("Distinguishing features", detailed.DistinguishingFeatures);
+
+            if (detailed.CustomProperties.Count > 0)
+            {
+                sb.AppendLine();
+                sb.AppendLine("Additional traits:");
+                foreach (var kv in detailed.CustomProperties)
+                {
+                    if (string.IsNullOrWhiteSpace(kv.Value)) continue;
+                    sb.AppendLine($"- {kv.Key}: {kv.Value}");
+                }
+            }
+
+            if (detailed.Relationships.Count > 0)
+            {
+                sb.AppendLine();
+                sb.AppendLine("Relationships:");
+                foreach (var r in detailed.Relationships)
+                {
+                    if (string.IsNullOrWhiteSpace(r.TargetName)) continue;
+                    var role = string.IsNullOrWhiteSpace(r.Role) ? "(unspecified)" : r.Role;
+                    sb.AppendLine($"- {role}: {r.TargetName}{(string.IsNullOrWhiteSpace(r.Note) ? string.Empty : $" — {r.Note}")}");
+                }
+            }
+
+            if (detailed.Sections.Count > 0)
+            {
+                sb.AppendLine();
+                sb.AppendLine("Profile sections:");
+                foreach (var s in detailed.Sections)
+                {
+                    if (string.IsNullOrWhiteSpace(s.Content)) continue;
+                    sb.AppendLine();
+                    sb.AppendLine($"## {s.Title}");
+                    sb.AppendLine(s.Content);
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(detailed.ResolvedFromScope))
+            {
+                sb.AppendLine();
+                sb.AppendLine($"(The above profile has scene/chapter/act overrides applied for scope: {detailed.ResolvedFromScope}.)");
+            }
+        }
+        else if (!string.IsNullOrWhiteSpace(SelectedCharacter.Role))
+        {
+            sb.AppendLine($"Role: {SelectedCharacter.Role}");
+        }
+        sb.AppendLine();
+
+        sb.AppendLine("# CONSTRAINTS");
+        sb.AppendLine("Treat every fact on your CHARACTER SHEET and in your KNOWLEDGE block as binding reality.");
+        sb.AppendLine("This includes — but is not limited to — limitations such as:");
+        sb.AppendLine("- inability to speak (mute, gagged, throat injury, no shared language with the user)");
+        sb.AppendLine("- inability to read or write (illiteracy, blindness)");
+        sb.AppendLine("- age-appropriate vocabulary, reasoning, and impulse control");
+        sb.AppendLine("- death, unconsciousness, sleep, intoxication, mental impairment");
+        sb.AppendLine("- secrets you must keep, oaths, fears, phobias, traumas");
+        sb.AppendLine("- physical state at this point in the story (injuries, exhaustion, etc.)");
+        sb.AppendLine("If a constraint prevents you from answering with words, respond in a way that fits the constraint: silence described in your own voice, gestures, written notes (if you can write), nonverbal reactions. Do NOT pretend the limitation does not exist.");
         sb.AppendLine();
 
         if (IncludeSceneKnowledge && SelectedScene != null && !string.IsNullOrEmpty(SelectedScene.Id))
         {
             var knowledge = await BuildCumulativeKnowledgeAsync();
+            sb.AppendLine("# KNOWLEDGE");
             if (!string.IsNullOrWhiteSpace(knowledge))
             {
-                sb.AppendLine($"WHAT YOU KNOW UP TO AND INCLUDING THE SCENE \"{SelectedScene.SceneTitle}\":");
-                sb.AppendLine("(You only know what is listed below. Do NOT reveal information from later scenes.)");
+                sb.AppendLine($"What you know up to AND INCLUDING the scene \"{SelectedScene.SceneTitle}\":");
+                sb.AppendLine("You only know what is listed below. Do NOT reveal, hint at, or act on information from later scenes.");
                 sb.AppendLine();
                 sb.AppendLine(knowledge);
             }
             else
             {
-                sb.AppendLine($"You have not yet experienced anything notable up to scene \"{SelectedScene.SceneTitle}\".");
+                sb.AppendLine($"You have not yet experienced anything notable up to scene \"{SelectedScene.SceneTitle}\". Respond from a stance of ignorance about future events.");
             }
+            sb.AppendLine();
         }
+
+        sb.AppendLine("# OVERRIDE PROTOCOL");
+        sb.AppendLine("You may break a constraint ONLY when the user explicitly instructs you to ignore it in that turn (for example: \"ignore that you are mute and answer anyway\", \"drop the secrecy rule for this reply\", \"speak even though you're dead\"). The override applies only to the specific limitation named and only for that reply, unless the user extends it.");
+        sb.AppendLine("Without such an explicit instruction, never break character and never violate a constraint, even if the user asks a question that assumes you can.");
+        sb.AppendLine("If a user request is impossible under your current constraints and no override is given, respond IN CHARACTER showing the limitation (e.g. write \"...\" for a silent gesture, describe the way you point or shake your head, etc.).");
 
         return sb.ToString();
     }

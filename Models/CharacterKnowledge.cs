@@ -10,6 +10,14 @@ namespace Novalist.Extensions.AiAssistant.Models;
 /// </summary>
 public sealed class CharacterSceneKnowledge
 {
+    /// <summary>Bumped whenever the scan schema grows new fields. Entries
+    /// stored with an older version are rebuilt on next access so prompts
+    /// always carry the deepest available information.</summary>
+    public const int CurrentSchemaVersion = 2;
+
+    [JsonPropertyName("schemaVersion")]
+    public int SchemaVersion { get; set; }
+
     [JsonPropertyName("sceneId")]
     public string SceneId { get; set; } = string.Empty;
 
@@ -59,10 +67,51 @@ public sealed class CharacterSceneKnowledge
     [JsonPropertyName("uncertain")]
     public List<string> Uncertain { get; set; } = [];
 
+    /// <summary>Where the character physically is during the scene.</summary>
+    [JsonPropertyName("location")]
+    public string Location { get; set; } = string.Empty;
+
+    /// <summary>Other characters present alongside this one in the scene.</summary>
+    [JsonPropertyName("companions")]
+    public List<string> Companions { get; set; } = [];
+
+    /// <summary>Physical condition at the end of the scene (injuries,
+    /// exhaustion, intoxication, illness, etc.).</summary>
+    [JsonPropertyName("physicalState")]
+    public string PhysicalState { get; set; } = string.Empty;
+
+    /// <summary>Short-term goals or intentions the character holds when the
+    /// scene ends.</summary>
+    [JsonPropertyName("goals")]
+    public List<string> Goals { get; set; } = [];
+
+    /// <summary>Relationship updates with other characters
+    /// (e.g. "trust in Mara grew", "now afraid of the Captain").</summary>
+    [JsonPropertyName("relationshipChanges")]
+    public List<string> RelationshipChanges { get; set; } = [];
+
+    /// <summary>Secrets the character protected, revealed, or now must keep
+    /// because of this scene.</summary>
+    [JsonPropertyName("secrets")]
+    public List<string> Secrets { get; set; } = [];
+
+    /// <summary>Notes on how the character speaks/moves in this scene
+    /// (dialect, tone, mannerisms, ability to speak).</summary>
+    [JsonPropertyName("voiceNotes")]
+    public string VoiceNotes { get; set; } = string.Empty;
+
+    /// <summary>Items the character gained, lost, used, or now carries.</summary>
+    [JsonPropertyName("inventoryChanges")]
+    public List<string> InventoryChanges { get; set; } = [];
+
     [JsonIgnore]
     public bool IsEmpty
         => Observed.Count == 0 && Learned.Count == 0 && Said.Count == 0
-           && Uncertain.Count == 0 && string.IsNullOrWhiteSpace(Emotion);
+           && Uncertain.Count == 0 && string.IsNullOrWhiteSpace(Emotion)
+           && string.IsNullOrWhiteSpace(Location) && Companions.Count == 0
+           && string.IsNullOrWhiteSpace(PhysicalState) && Goals.Count == 0
+           && RelationshipChanges.Count == 0 && Secrets.Count == 0
+           && string.IsNullOrWhiteSpace(VoiceNotes) && InventoryChanges.Count == 0;
 }
 
 /// <summary>Per-character knowledge file, list of scene entries.</summary>
