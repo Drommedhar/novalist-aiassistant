@@ -254,71 +254,10 @@ public partial class CharacterChatViewModel : ObservableObject
         sb.AppendLine();
 
         sb.AppendLine("# CHARACTER SHEET");
-        sb.AppendLine($"Name: {displayName}");
         if (detailed != null)
-        {
-            void Field(string label, string value)
-            {
-                if (!string.IsNullOrWhiteSpace(value)) sb.AppendLine($"{label}: {value}");
-            }
-            Field("Age", detailed.Age);
-            Field("Gender", detailed.Gender);
-            Field("Role", detailed.Role);
-            Field("Group / faction", detailed.Group);
-            Field("Eye color", detailed.EyeColor);
-            Field("Hair color", detailed.HairColor);
-            Field("Hair length", detailed.HairLength);
-            Field("Height", detailed.Height);
-            Field("Build", detailed.Build);
-            Field("Skin tone", detailed.SkinTone);
-            Field("Distinguishing features", detailed.DistinguishingFeatures);
-
-            if (detailed.CustomProperties.Count > 0)
-            {
-                sb.AppendLine();
-                sb.AppendLine("Additional traits:");
-                foreach (var kv in detailed.CustomProperties)
-                {
-                    if (string.IsNullOrWhiteSpace(kv.Value)) continue;
-                    sb.AppendLine($"- {kv.Key}: {kv.Value}");
-                }
-            }
-
-            if (detailed.Relationships.Count > 0)
-            {
-                sb.AppendLine();
-                sb.AppendLine("Relationships:");
-                foreach (var r in detailed.Relationships)
-                {
-                    if (string.IsNullOrWhiteSpace(r.TargetName)) continue;
-                    var role = string.IsNullOrWhiteSpace(r.Role) ? "(unspecified)" : r.Role;
-                    sb.AppendLine($"- {role}: {r.TargetName}{(string.IsNullOrWhiteSpace(r.Note) ? string.Empty : $" — {r.Note}")}");
-                }
-            }
-
-            if (detailed.Sections.Count > 0)
-            {
-                sb.AppendLine();
-                sb.AppendLine("Profile sections:");
-                foreach (var s in detailed.Sections)
-                {
-                    if (string.IsNullOrWhiteSpace(s.Content)) continue;
-                    sb.AppendLine();
-                    sb.AppendLine($"## {s.Title}");
-                    sb.AppendLine(s.Content);
-                }
-            }
-
-            if (!string.IsNullOrWhiteSpace(detailed.ResolvedFromScope))
-            {
-                sb.AppendLine();
-                sb.AppendLine($"(The above profile has scene/chapter/act overrides applied for scope: {detailed.ResolvedFromScope}.)");
-            }
-        }
-        else if (!string.IsNullOrWhiteSpace(SelectedCharacter.Role))
-        {
-            sb.AppendLine($"Role: {SelectedCharacter.Role}");
-        }
+            sb.Append(CharacterSheetBuilder.Build(detailed));
+        else
+            sb.Append(CharacterSheetBuilder.BuildFallback(SelectedCharacter));
         sb.AppendLine();
 
         sb.AppendLine("# CONSTRAINTS");

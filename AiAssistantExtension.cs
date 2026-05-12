@@ -77,7 +77,7 @@ public sealed class AiAssistantExtension : IExtension, IRibbonContributor, ISide
         _grammarCheckService = new AiGrammarCheckService(AiService);
         _grammarCheckService.IsGrammarCheckEnabled = Settings.GrammarCheckEnabled;
 
-        _knowledgeBuilder = new KnowledgeBuilder(AiService);
+        _knowledgeBuilder = new KnowledgeBuilder(AiService, host);
         _knowledgeService = new CharacterKnowledgeService(host, _knowledgeBuilder, Id);
 
         _inlineRewriteService = new InlineRewriteService(AiService, host, _loc);

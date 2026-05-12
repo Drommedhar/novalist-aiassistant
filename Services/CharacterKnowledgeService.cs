@@ -145,7 +145,7 @@ public sealed class CharacterKnowledgeService
         // No alias prefilter — let the LLM decide whether the character is
         // actually present. The prompt instructs it to set present=false when
         // the character is only mentioned or absent.
-        var built = await _builder.BuildAsync(character, sceneText, scene.Title, chapter.Title, cancellationToken).ConfigureAwait(false);
+        var built = await _builder.BuildAsync(character, sceneText, scene.Title, chapter.Title, scene.ChapterGuid, scene.Id, cancellationToken).ConfigureAwait(false);
         built.SceneId = scene.Id;
         built.ChapterGuid = scene.ChapterGuid;
         built.ChapterTitle = chapter.Title;
@@ -404,7 +404,7 @@ public sealed class CharacterKnowledgeService
                         ReportNow(charIndex, character.DisplayName, sceneIndex, chapter.Title, scene.Title);
 
                         var sw = Stopwatch.StartNew();
-                        var built = await _builder.BuildAsync(character, sceneText, scene.Title, chapter.Title, cancellationToken).ConfigureAwait(false);
+                        var built = await _builder.BuildAsync(character, sceneText, scene.Title, chapter.Title, scene.ChapterGuid, scene.Id, cancellationToken).ConfigureAwait(false);
                         sw.Stop();
 
                         built.SceneId = scene.Id;

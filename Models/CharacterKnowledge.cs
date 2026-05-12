@@ -13,7 +13,7 @@ public sealed class CharacterSceneKnowledge
     /// <summary>Bumped whenever the scan schema grows new fields. Entries
     /// stored with an older version are rebuilt on next access so prompts
     /// always carry the deepest available information.</summary>
-    public const int CurrentSchemaVersion = 2;
+    public const int CurrentSchemaVersion = 3;
 
     [JsonPropertyName("schemaVersion")]
     public int SchemaVersion { get; set; }

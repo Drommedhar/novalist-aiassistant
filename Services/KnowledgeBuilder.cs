@@ -17,10 +17,12 @@ namespace Novalist.Extensions.AiAssistant.Services;
 public sealed class KnowledgeBuilder
 {
     private readonly AiService _ai;
+    private readonly IHostServices _host;
 
-    public KnowledgeBuilder(AiService ai)
+    public KnowledgeBuilder(AiService ai, IHostServices host)
     {
         _ai = ai;
+        _host = host;
     }
 
     public async Task<CharacterSceneKnowledge> BuildAsync(
@@ -28,8 +30,26 @@ public sealed class KnowledgeBuilder
         string sceneText,
         string sceneTitle,
         string chapterTitle,
+        string? chapterGuid,
+        string? sceneId,
         CancellationToken cancellationToken = default)
     {
+        CharacterDetailedInfo? detailed = null;
+        try
+        {
+            detailed = await _host.EntityService.GetCharacterDetailedAsync(
+                character.Id, chapterGuid, sceneId).ConfigureAwait(false);
+        }
+        catch
+        {
+            // Host resolution failure must not block extraction; fall back to
+            // the lightweight CharacterInfo sheet below.
+        }
+
+        var characterSheet = detailed != null
+            ? CharacterSheetBuilder.Build(detailed)
+            : CharacterSheetBuilder.BuildFallback(character);
+
         var sysPrompt = $$"""
         You analyse novel scenes from the perspective of a single character. Read
         the scene and decide whether the character "{{character.DisplayName}}" is
@@ -37,6 +57,13 @@ public sealed class KnowledgeBuilder
         thoughts, dialogue, or narration). If they are present, extract a DEEP
         record of what they personally experienced — enough that another AI could
         later impersonate the character with full continuity.
+
+        Use the CHARACTER SHEET below as binding reality when interpreting the
+        scene: a six-year-old does not understand adult dialogue the way an
+        adult would; a mute character cannot have said anything aloud; an
+        unconscious or absent character is not "present". Honour age, physical
+        state, secrets, and relationships from the sheet — they constrain what
+        the character could observe, learn, say, or do in this scene.
 
         Output STRICT JSON matching this schema (no prose, no fences):
         {
@@ -78,13 +105,12 @@ public sealed class KnowledgeBuilder
         """;
 
         var userPrompt = $$"""
-        CHARACTER:
-        Name: {{character.DisplayName}}
-        Role: {{character.Role}}
-        Aliases: {{string.Join(", ", character.Aliases)}}
+        # CHARACTER SHEET
+        {{characterSheet.TrimEnd()}}
 
-        CHAPTER: {{chapterTitle}}
-        SCENE: {{sceneTitle}}
+        # SCENE
+        Chapter: {{chapterTitle}}
+        Scene: {{sceneTitle}}
 
         SCENE TEXT:
         {{sceneText}}
