@@ -257,7 +257,12 @@ public sealed class AiAssistantExtension : IExtension, IRibbonContributor, ISide
             {
                 if (ctx is SceneInfo s && _synopsisService != null)
                 {
-                    _ = _synopsisService.GenerateAndSaveAsync(s.ChapterGuid, s.Id);
+                    var task = Task.Run(() => _synopsisService.GenerateAndSaveAsync(s.ChapterGuid, s.Id));
+                    _ = task.ContinueWith(t =>
+                    {
+                        if (t.Exception != null)
+                            _host.PostToUI(() => _host.ShowNotification($"Synopsis failed: {t.Exception.GetBaseException().Message}"));
+                    }, TaskScheduler.Default);
                 }
             },
         },

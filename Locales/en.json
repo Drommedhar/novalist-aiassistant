@@ -109,6 +109,11 @@
     "generateSynopsis": "Generate synopsis (AI)"
   },
   "synopsis": {
+    "starting": "Generating synopsis…",
+    "readingScene": "Reading scene…",
+    "callingAi": "Asking AI…",
+    "saving": "Saving synopsis…",
+    "cancelled": "Synopsis generation cancelled.",
     "emptyScene": "Scene is empty — nothing to summarize.",
     "emptyResult": "Synopsis generation returned empty.",
     "success": "Synopsis updated.",

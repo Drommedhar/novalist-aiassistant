@@ -107,6 +107,11 @@
     "generateSynopsis": "Synopsis generieren (KI)"
   },
   "synopsis": {
+    "starting": "Synopsis wird generiert…",
+    "readingScene": "Szene wird gelesen…",
+    "callingAi": "Frage KI…",
+    "saving": "Synopsis wird gespeichert…",
+    "cancelled": "Synopsis-Generierung abgebrochen.",
     "emptyScene": "Szene ist leer — nichts zu zusammenfassen.",
     "emptyResult": "Synopsis-Generierung lieferte leeres Ergebnis.",
     "success": "Synopsis aktualisiert.",

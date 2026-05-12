@@ -27,39 +27,69 @@ public sealed class SceneSynopsisService
 
     public async Task<string?> GenerateAndSaveAsync(string chapterGuid, string sceneId, CancellationToken cancellationToken = default)
     {
-        var content = await _host.ProjectService.ReadSceneContentAsync(chapterGuid, sceneId).ConfigureAwait(false);
-        if (string.IsNullOrWhiteSpace(content))
+        using var progress = _host.ShowBusyProgress(new BusyProgressOptions
         {
-            _host.ShowNotification(_loc.T("synopsis.emptyScene"));
-            return null;
-        }
+            Title = _loc.T("synopsis.starting"),
+            InitialStatus = _loc.T("synopsis.readingScene"),
+            IsIndeterminate = true,
+            AllowCancel = true,
+        });
 
-        var plain = StripHtml(content);
-        if (plain.Length > 8000) plain = plain[..8000];
-
-        var sys = $"You write a short, accurate synopsis of a single scene from a novel — at most two sentences. Capture what happens, who is involved, and the change of state by the end of the scene. Do not invent details. No preamble, no quotes, no commentary. Respond in {_ai.LanguageName}.";
-        var messages = new List<SdkAiChatMessage>
-        {
-            new() { Role = "system", Content = sys },
-            new() { Role = "user", Content = $"SCENE TEXT:\n{plain}" },
-        };
+        // Combine the host's cancel signal with the caller's token.
+        using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken, progress.CancellationToken);
+        var ct = linkedCts.Token;
 
         try
         {
-            var result = await _ai.GenerateChatAsync(messages, cancellationToken: cancellationToken).ConfigureAwait(false);
+            var content = await _host.ProjectService.ReadSceneContentAsync(chapterGuid, sceneId).ConfigureAwait(false);
+            ct.ThrowIfCancellationRequested();
+            if (string.IsNullOrWhiteSpace(content))
+            {
+                progress.Dispose();
+                _host.ShowNotification(_loc.T("synopsis.emptyScene"));
+                return null;
+            }
+
+            var plain = StripHtml(content);
+            if (plain.Length > 8000) plain = plain[..8000];
+
+            progress.SetStatus(_loc.T("synopsis.callingAi"));
+
+            var sys = $"You write a short, accurate synopsis of a single scene from a novel — at most two sentences. Capture what happens, who is involved, and the change of state by the end of the scene. Do not invent details. No preamble, no quotes, no commentary. Respond in {_ai.LanguageName}.";
+            var messages = new List<SdkAiChatMessage>
+            {
+                new() { Role = "system", Content = sys },
+                new() { Role = "user", Content = $"SCENE TEXT:\n{plain}" },
+            };
+
+            var result = await _ai.GenerateChatAsync(messages, cancellationToken: ct).ConfigureAwait(false);
+            ct.ThrowIfCancellationRequested();
+
             var synopsis = (result.Response ?? string.Empty).Trim().Trim('"');
             if (string.IsNullOrWhiteSpace(synopsis))
             {
+                progress.Dispose();
                 _host.ShowNotification(_loc.T("synopsis.emptyResult"));
                 return null;
             }
 
+            progress.SetStatus(_loc.T("synopsis.saving"));
             await _host.ProjectService.SetSceneSynopsisAsync(chapterGuid, sceneId, synopsis).ConfigureAwait(false);
+
+            progress.Dispose();
             _host.ShowNotification(_loc.T("synopsis.success"));
             return synopsis;
         }
+        catch (OperationCanceledException)
+        {
+            progress.Dispose();
+            _host.ShowNotification(_loc.T("synopsis.cancelled"));
+            return null;
+        }
         catch (Exception ex)
         {
+            progress.Dispose();
             _host.ShowNotification(string.Format(_loc.T("synopsis.failedReason"), ex.Message));
             return null;
         }
