@@ -18,6 +18,7 @@ public sealed class AiAssistantExtension : IExtension, IRibbonContributor, ISide
     public string Author => "Novalist Team";
 
     private IHostServices _host = null!;
+    internal IHostServices Host => _host;
     private IExtensionLocalization _loc = null!;
     internal Services.AiService AiService { get; } = new();
     internal AiSettings Settings { get; private set; } = new();

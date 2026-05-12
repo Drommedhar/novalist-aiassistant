@@ -54,6 +54,7 @@
     "knowledgeToggleAll": "Alle umschalten",
     "knowledgeStartScan": "Scan starten",
     "knowledgeScanRunningTitle": "Figurenwissen wird gescannt",
+    "knowledgeScanStarting": "Scan wird gestartet…",
     "knowledgeProgressOverall": "Gesamt: {0} / {1} Schritte",
     "knowledgeActiveHeader": "Aktive Prompts",
     "knowledgeActiveLine": "{0} \u00b7 {1} \u2192 {2}",

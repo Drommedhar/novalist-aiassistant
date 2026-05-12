@@ -186,57 +186,56 @@ public partial class AiSettingsViewModel : ObservableObject
         var selected = KnowledgeCharacterChoices.Where(c => c.IsSelected).Select(c => c.Source).ToList();
         if (selected.Count == 0) return;
 
-        KnowledgeScanState = "Running";
-        AiKnowledgeScanProgress = 0;
-        AiKnowledgeScanOverallLine = string.Empty;
-        AiKnowledgeScanCountsLine = string.Empty;
-        AiKnowledgeScanEtaLine = string.Empty;
-        AiKnowledgeScanActive.Clear();
         AiKnowledgeScanFinalSummary = string.Empty;
 
+        using var busy = _extension.Host.ShowBusyProgress(new BusyProgressOptions
+        {
+            Title = _loc.T("settings.knowledgeScanRunningTitle"),
+            InitialStatus = _loc.T("settings.knowledgeScanStarting"),
+            IsIndeterminate = false,
+            ShowProgressBar = true,
+            AllowCancel = true,
+            CancelLabel = _loc.T("settings.knowledgeCancel"),
+        });
+
         _scanCts?.Cancel();
-        _scanCts = new CancellationTokenSource();
+        _scanCts = CancellationTokenSource.CreateLinkedTokenSource(busy.CancellationToken);
+
+        var activeLineFmt = _loc.T("settings.knowledgeActiveLine");
+        var overallFmt = _loc.T("settings.knowledgeProgressOverall");
+        var countsFmt = _loc.T("settings.knowledgeProgressCounts");
+        var etaFmt = _loc.T("settings.knowledgeProgressEta");
 
         var progress = new System.Progress<KnowledgeScanProgress>(p =>
         {
-            AiKnowledgeScanProgress = p.OverallFraction;
-            AiKnowledgeScanOverallLine = string.Format(_loc.T("settings.knowledgeProgressOverall"),
-                p.OverallDone, p.OverallTotal);
-            AiKnowledgeScanCountsLine = string.Format(_loc.T("settings.knowledgeProgressCounts"),
-                p.StoredPresent, p.StoredAbsent, p.Reused);
-            AiKnowledgeScanEtaLine = string.Format(_loc.T("settings.knowledgeProgressEta"),
+            busy.SetProgress(p.OverallFraction);
+            busy.SetStatus(string.Format(overallFmt, p.OverallDone, p.OverallTotal));
+
+            var detail = new List<string>();
+            foreach (var s in p.ActiveSlots)
+                detail.Add(string.Format(activeLineFmt, s.CharacterName, s.ChapterTitle, s.SceneTitle));
+            detail.Add(string.Format(countsFmt, p.StoredPresent, p.StoredAbsent, p.Reused));
+            detail.Add(string.Format(etaFmt,
                 p.EstimatedRemainingMs > 0 ? FormatDuration(p.EstimatedRemainingMs) : "—",
                 FormatDuration(p.ElapsedMs),
-                p.AverageStepMs > 0 ? FormatDuration(p.AverageStepMs) : "—");
-
-            // Refresh active-slot lines in place so existing rows that still
-            // match keep their identity (less UI churn).
-            var fmt = _loc.T("settings.knowledgeActiveLine");
-            var newLines = p.ActiveSlots.Select(s => new KnowledgeActiveLine
-            {
-                Display = string.Format(fmt, s.CharacterName, s.ChapterTitle, s.SceneTitle)
-            }).ToList();
-            // Simple replace — list is short (≤ parallelism).
-            AiKnowledgeScanActive.Clear();
-            foreach (var line in newLines) AiKnowledgeScanActive.Add(line);
+                p.AverageStepMs > 0 ? FormatDuration(p.AverageStepMs) : "—"));
+            busy.SetDetails(detail);
         });
 
+        KnowledgeScanState = "Idle"; // dialog handles UI; reset inline state
         try
         {
             await _extension.RunKnowledgeScanAsync(selected, progress, _scanCts.Token);
             AiKnowledgeScanCompleted = true;
-            AiKnowledgeScanFinalSummary = _loc.T("settings.knowledgeScanComplete");
-            KnowledgeScanState = "Done";
+            _extension.Host.ShowNotification(_loc.T("settings.knowledgeScanComplete"));
         }
         catch (System.OperationCanceledException)
         {
-            AiKnowledgeScanFinalSummary = _loc.T("settings.knowledgeScanCancelled");
-            KnowledgeScanState = "Done";
+            _extension.Host.ShowNotification(_loc.T("settings.knowledgeScanCancelled"));
         }
         catch (System.Exception ex)
         {
-            AiKnowledgeScanFinalSummary = ex.Message;
-            KnowledgeScanState = "Done";
+            _extension.Host.ShowNotification(ex.Message);
         }
     }
 
