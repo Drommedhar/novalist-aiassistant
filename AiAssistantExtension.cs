@@ -9,7 +9,7 @@ using Novalist.Sdk.Services;
 
 namespace Novalist.Extensions.AiAssistant;
 
-public sealed class AiAssistantExtension : IExtension, IRibbonContributor, ISidebarContributor, IContentViewContributor, ISettingsContributor, IGrammarCheckContributor, IContextMenuContributor
+public sealed class AiAssistantExtension : IExtension, IRibbonContributor, ISidebarContributor, IContentViewContributor, ISettingsContributor, IGrammarCheckContributor, IContextMenuContributor, IWizardContributor
 {
     public string Id => "com.novalist.ai";
     public string DisplayName => "AI Assistant";
@@ -67,6 +67,8 @@ public sealed class AiAssistantExtension : IExtension, IRibbonContributor, ISide
     private const string IconSearch = "M11 17.25a6.25 6.25 0 1 1 0-12.5 6.25 6.25 0 0 1 0 12.5zm0 0L16.65 22.9";
     private const string IconUser = "M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2 M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z";
 
+    private bool _setupWizardChecked;
+
     public void Initialize(IHostServices host)
     {
         _host = host;
@@ -93,7 +95,22 @@ public sealed class AiAssistantExtension : IExtension, IRibbonContributor, ISide
             _lastOpenedScene = scene;
         };
         host.SceneSaved += scene => { _ = OnSceneSavedAsync(scene); };
-        host.ProjectLoaded += info => { _ = ReloadCharactersAsync(); };
+        host.ProjectLoaded += info =>
+        {
+            _ = ReloadCharactersAsync();
+
+            // First-run setup wizard: only once per session, and only when
+            // nothing is configured yet. Runs after a project is open so the
+            // user has context.
+            if (!_setupWizardChecked
+                && !Settings.Enabled
+                && string.IsNullOrWhiteSpace(Settings.LmStudioModel)
+                && string.IsNullOrWhiteSpace(Settings.CopilotModel))
+            {
+                _setupWizardChecked = true;
+                _ = RunSetupWizardAsync();
+            }
+        };
         _ = ReloadCharactersAsync();
     }
 
@@ -198,6 +215,48 @@ public sealed class AiAssistantExtension : IExtension, IRibbonContributor, ISide
         _chatVm = null;
         _analysisVm = null;
         _settingsVm = null;
+    }
+
+    // ── IWizardContributor ──────────────────────────────────────────
+
+    public IReadOnlyList<Novalist.Sdk.Models.Wizards.WizardDefinition> GetWizards()
+        => new[] { Services.AiSetupWizard.Build(_loc.T) };
+
+    /// <summary>Launches the AI setup wizard via the host, applies the result
+    /// to <see cref="Settings"/>, and persists. Safe to call repeatedly — does
+    /// nothing if the user cancels.</summary>
+    internal async Task RunSetupWizardAsync()
+    {
+        var definition = Services.AiSetupWizard.Build(_loc.T);
+
+        // Seed current values so the wizard reflects existing settings instead
+        // of starting blank when re-launched from the settings page.
+        var seed = new Novalist.Sdk.Models.Wizards.WizardResult { DefinitionId = definition.Id };
+        seed.Answers["enabled"] = new Novalist.Sdk.Models.Wizards.WizardAnswer
+        {
+            Text = Settings.Enabled ? "true" : "false",
+        };
+        if (!string.IsNullOrEmpty(Settings.Provider))
+            seed.Answers["provider"] = new Novalist.Sdk.Models.Wizards.WizardAnswer { Text = Settings.Provider };
+        if (!string.IsNullOrEmpty(Settings.LmStudioBaseUrl))
+            seed.Answers["lmStudioBaseUrl"] = new Novalist.Sdk.Models.Wizards.WizardAnswer { Text = Settings.LmStudioBaseUrl };
+        if (!string.IsNullOrEmpty(Settings.LmStudioModel))
+            seed.Answers["lmStudioModel"] = new Novalist.Sdk.Models.Wizards.WizardAnswer { Text = Settings.LmStudioModel };
+        if (!string.IsNullOrEmpty(Settings.LmStudioApiToken))
+            seed.Answers["lmStudioApiToken"] = new Novalist.Sdk.Models.Wizards.WizardAnswer { Text = Settings.LmStudioApiToken };
+        if (!string.IsNullOrEmpty(Settings.CopilotPath))
+            seed.Answers["copilotPath"] = new Novalist.Sdk.Models.Wizards.WizardAnswer { Text = Settings.CopilotPath };
+        if (!string.IsNullOrEmpty(Settings.CopilotModel))
+            seed.Answers["copilotModel"] = new Novalist.Sdk.Models.Wizards.WizardAnswer { Text = Settings.CopilotModel };
+        if (!string.IsNullOrEmpty(Settings.ResponseLanguage))
+            seed.Answers["responseLanguage"] = new Novalist.Sdk.Models.Wizards.WizardAnswer { Text = Settings.ResponseLanguage };
+
+        var result = await _host.RunWizardAsync(definition, seed);
+        if (result == null || !result.Completed) return;
+
+        Services.AiSetupWizard.Apply(Settings, result);
+        SaveSettings();
+        _host.ShowNotification(_loc.T("toast.setupComplete"));
     }
 
     // ── Settings persistence ────────────────────────────────────────

@@ -93,7 +93,8 @@
   "toast": {
     "knowledgeClearSuccess": "Knowledge cache cleared.",
     "knowledgeClearFailed": "Knowledge cache could not be cleared.",
-    "knowledgeClearFailedReason": "Knowledge cache clear failed: {0}"
+    "knowledgeClearFailedReason": "Knowledge cache clear failed: {0}",
+    "setupComplete": "AI Assistant configured."
   },
   "inline": {
     "rewrite": "Rewrite",
@@ -136,5 +137,53 @@
     "rawOutput": "Raw output",
     "scene": "Scene:",
     "allScenes": "All Scenes"
+  },
+  "wizard": {
+    "ai": {
+      "displayName": "AI Assistant — setup",
+      "description": "Pick a provider and fill in just enough to start chatting.",
+      "enabled": {
+        "title": "Enable AI features?",
+        "help": "Master toggle. You can flip this off later in Settings → AI.",
+        "yes": "Yes — set it up now",
+        "no": "Not now"
+      },
+      "provider": {
+        "title": "Which provider?",
+        "help": "LM Studio runs a model locally. GitHub Copilot CLI is cloud-hosted and needs a copilot binary on PATH.",
+        "lmstudio": "LM Studio (local)",
+        "lmstudioDesc": "Free, private, runs against a model loaded in LM Studio on your machine.",
+        "copilot": "GitHub Copilot CLI",
+        "copilotDesc": "Uses the copilot binary on PATH. Requires a Copilot subscription."
+      },
+      "lmStudioUrl": {
+        "title": "LM Studio base URL",
+        "help": "Where LM Studio's local server is reachable. Default works out of the box.",
+        "errorStatus": "LM Studio responded {0} {1} at {2}/api/v1/models. Is the local server enabled?",
+        "errorTimeout": "Connection to {0} timed out. Is LM Studio running and the server enabled?",
+        "errorReach": "Cannot reach {0}: {1}"
+      },
+      "lmStudioModel": {
+        "title": "Model",
+        "help": "Pick a model loaded in LM Studio. The list is fetched from the server you just confirmed."
+      },
+      "lmStudioToken": {
+        "title": "API token (optional)",
+        "help": "Most local LM Studio installs do not require a token. Leave empty to skip."
+      },
+      "copilotPath": {
+        "title": "Copilot CLI path",
+        "help": "Path or command name. \"copilot\" works if the binary is on PATH."
+      },
+      "copilotModel": {
+        "title": "Copilot model (optional)",
+        "help": "Empty uses the CLI's default model."
+      },
+      "responseLanguage": {
+        "title": "Response language",
+        "help": "Empty = follow the app's UI language.",
+        "placeholder": "English"
+      }
+    }
   }
 }

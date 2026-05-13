@@ -134,5 +134,53 @@
     "rawOutput": "Rohausgabe",
     "scene": "Szene:",
     "allScenes": "Alle Szenen"
+  },
+  "wizard": {
+    "ai": {
+      "displayName": "KI-Assistent — Einrichtung",
+      "description": "Wähle einen Anbieter und gib nur das Nötigste ein, um loszulegen.",
+      "enabled": {
+        "title": "KI-Funktionen aktivieren?",
+        "help": "Hauptschalter. Du kannst ihn später in Einstellungen → KI wieder umlegen.",
+        "yes": "Ja — jetzt einrichten",
+        "no": "Nicht jetzt"
+      },
+      "provider": {
+        "title": "Welcher Anbieter?",
+        "help": "LM Studio führt ein Modell lokal aus. GitHub Copilot CLI ist cloudbasiert und benötigt eine copilot-Datei im PATH.",
+        "lmstudio": "LM Studio (lokal)",
+        "lmstudioDesc": "Kostenlos, privat, nutzt ein in LM Studio geladenes Modell auf deinem Rechner.",
+        "copilot": "GitHub Copilot CLI",
+        "copilotDesc": "Nutzt die copilot-Datei aus dem PATH. Benötigt ein Copilot-Abo."
+      },
+      "lmStudioUrl": {
+        "title": "LM Studio Basis-URL",
+        "help": "Wo der lokale Server von LM Studio erreichbar ist. Standard funktioniert meist.",
+        "errorStatus": "LM Studio antwortete {0} {1} auf {2}/api/v1/models. Ist der lokale Server aktiviert?",
+        "errorTimeout": "Verbindung zu {0} ist abgelaufen. Läuft LM Studio und ist der Server aktiv?",
+        "errorReach": "{0} nicht erreichbar: {1}"
+      },
+      "lmStudioModel": {
+        "title": "Modell",
+        "help": "Wähle ein in LM Studio geladenes Modell. Die Liste wird vom gerade bestätigten Server geholt."
+      },
+      "lmStudioToken": {
+        "title": "API-Token (optional)",
+        "help": "Die meisten lokalen LM-Studio-Installationen benötigen keinen Token. Leer lassen zum Überspringen."
+      },
+      "copilotPath": {
+        "title": "Copilot-CLI-Pfad",
+        "help": "Pfad oder Befehlsname. \"copilot\" funktioniert, wenn die Datei im PATH liegt."
+      },
+      "copilotModel": {
+        "title": "Copilot-Modell (optional)",
+        "help": "Leer verwendet das Standardmodell der CLI."
+      },
+      "responseLanguage": {
+        "title": "Antwortsprache",
+        "help": "Leer = folgt der UI-Sprache der App.",
+        "placeholder": "Deutsch"
+      }
+    }
   }
 }
