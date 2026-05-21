@@ -13,12 +13,15 @@ using Novalist.Sdk.Services;
 
 namespace Novalist.Extensions.AiAssistant.ViewModels;
 
-public partial class CharacterChatViewModel : ObservableObject
+public partial class CharacterChatViewModel : ObservableObject, IDisposable
 {
     private readonly IHostServices _host;
     private readonly AiAssistantExtension _extension;
     private readonly IExtensionLocalization _loc;
     private readonly Func<CharacterKnowledgeService?> _knowledgeAccessor;
+    private readonly Action<Novalist.Sdk.Services.ProjectInfo> _onProjectLoaded;
+    private readonly Action<Novalist.Sdk.Services.SceneInfo> _onSceneOpened;
+    private bool _disposed;
 
     public IExtensionLocalization Loc => _loc;
 
@@ -71,8 +74,21 @@ public partial class CharacterChatViewModel : ObservableObject
         _loc = host.GetLocalization(extension.Id);
         _knowledgeAccessor = knowledgeAccessor;
 
-        _host.ProjectLoaded += info => { _ = ReloadAsync(); };
-        _host.SceneOpened += scene => { _ = OnSceneOpenedAsync(scene); };
+        _onProjectLoaded = info => { var _ignore = ReloadAsync(); };
+        _onSceneOpened = scene => { var _ignore = OnSceneOpenedAsync(scene); };
+        _host.ProjectLoaded += _onProjectLoaded;
+        _host.SceneOpened += _onSceneOpened;
+    }
+
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+        _host.ProjectLoaded -= _onProjectLoaded;
+        _host.SceneOpened -= _onSceneOpened;
+        _cts?.Cancel();
+        _cts?.Dispose();
+        _cts = null;
     }
 
     public async Task ReloadAsync()

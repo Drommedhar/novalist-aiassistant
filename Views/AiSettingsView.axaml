@@ -20,12 +20,12 @@
         <StackPanel Spacing="2">
             <TextBlock Text="{Binding Loc[settings.aiProvider]}" FontSize="12" Foreground="{DynamicResource NormalText}" />
             <StackPanel Orientation="Horizontal" Spacing="16">
-                <RadioButton Content="LM Studio"
+                <RadioButton Content="{Binding Loc[ai.providerLmStudio]}"
                              IsChecked="{Binding IsLmStudioProvider}"
                              FontSize="12"
                              Command="{Binding SetAiProviderCommand}"
                              CommandParameter="lmstudio" />
-                <RadioButton Content="GitHub Copilot CLI"
+                <RadioButton Content="{Binding Loc[ai.providerCopilotCli]}"
                              IsChecked="{Binding IsCopilotProvider}"
                              FontSize="12"
                              Command="{Binding SetAiProviderCommand}"
@@ -162,11 +162,11 @@
                     <NumericUpDown Value="{Binding AiContextLength}" Minimum="0" Maximum="131072" Increment="1024" FormatString="N0" FontSize="12" />
                 </StackPanel>
                 <StackPanel Grid.Row="1" Grid.Column="0" Spacing="2">
-                    <TextBlock Text="Top P" FontSize="11" Foreground="{DynamicResource DimText}" />
+                    <TextBlock Text="{Binding Loc[ai.topP]}" FontSize="11" Foreground="{DynamicResource DimText}" />
                     <NumericUpDown Value="{Binding AiTopP}" Minimum="0" Maximum="1" Increment="0.05" FormatString="F2" FontSize="12" />
                 </StackPanel>
                 <StackPanel Grid.Row="1" Grid.Column="1" Spacing="2">
-                    <TextBlock Text="Min P" FontSize="11" Foreground="{DynamicResource DimText}" />
+                    <TextBlock Text="{Binding Loc[ai.minP]}" FontSize="11" Foreground="{DynamicResource DimText}" />
                     <NumericUpDown Value="{Binding AiMinP}" Minimum="0" Maximum="1" Increment="0.01" FormatString="F2" FontSize="12" />
                 </StackPanel>
                 <StackPanel Grid.Row="2" Grid.Column="0" Spacing="2">
@@ -199,7 +199,7 @@
         <Border Height="1" Background="{DynamicResource RibbonGroupBorder}" Margin="0,4,0,0" />
 
         <!-- Editor Assistance -->
-        <TextBlock Text="Editor Assistance"
+        <TextBlock Text="{Binding Loc[ai.editorAssistance]}"
                    FontSize="12"
                    FontWeight="SemiBold"
                    Foreground="{DynamicResource NormalText}" />

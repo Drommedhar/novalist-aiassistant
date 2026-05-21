@@ -8,11 +8,13 @@ using Novalist.Sdk.Services;
 
 namespace Novalist.Extensions.AiAssistant.ViewModels;
 
-public partial class StoryAnalysisViewModel : ObservableObject
+public partial class StoryAnalysisViewModel : ObservableObject, IDisposable
 {
     private readonly IHostServices _host;
     private readonly AiAssistantExtension _extension;
     private readonly IExtensionLocalization _loc;
+
+    public IExtensionLocalization Loc => _loc;
 
     [ObservableProperty]
     private bool _isAnalysing;
@@ -67,6 +69,16 @@ public partial class StoryAnalysisViewModel : ObservableObject
         _host = host;
         _extension = extension;
         _loc = host.GetLocalization(extension.Id);
+    }
+
+    private bool _disposed;
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+        _cts?.Cancel();
+        _cts?.Dispose();
+        _cts = null;
     }
 
     partial void OnSelectedSceneOptionChanged(string? value)

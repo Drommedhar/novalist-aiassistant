@@ -1,6 +1,7 @@
 using System.Collections.Specialized;
 using System.ComponentModel;
 using Avalonia.Controls;
+using Avalonia.Input;
 using Avalonia.Threading;
 using Novalist.Extensions.AiAssistant.ViewModels;
 
@@ -14,6 +15,20 @@ public partial class CharacterChatView : UserControl
     {
         InitializeComponent();
         DataContextChanged += OnDataContextChanged;
+    }
+
+    protected override void OnDetachedFromVisualTree(Avalonia.VisualTreeAttachmentEventArgs e)
+    {
+        DataContextChanged -= OnDataContextChanged;
+        if (_vm != null)
+        {
+            _vm.Turns.CollectionChanged -= OnTurnsChanged;
+            _vm.PropertyChanged -= OnVmPropertyChanged;
+            _vm = null;
+        }
+        if (ChatScroll != null)
+            ChatScroll.LayoutUpdated -= OnChatScrollLayoutUpdated;
+        base.OnDetachedFromVisualTree(e);
     }
 
     private void OnDataContextChanged(object? sender, System.EventArgs e)
@@ -63,5 +78,18 @@ public partial class CharacterChatView : UserControl
         ChatScroll.LayoutUpdated -= OnChatScrollLayoutUpdated;
         _pendingScrollToEnd = false;
         ChatScroll.ScrollToEnd();
+    }
+
+    private void OnChatInputKeyDown(object? sender, KeyEventArgs e)
+    {
+        // Enter sends; Shift+Enter inserts a newline. Matches AiChatView.
+        if (e.Key == Key.Enter
+            && (e.KeyModifiers & KeyModifiers.Shift) == 0
+            && DataContext is CharacterChatViewModel vm
+            && vm.SendCommand.CanExecute(null))
+        {
+            vm.SendCommand.Execute(null);
+            e.Handled = true;
+        }
     }
 }

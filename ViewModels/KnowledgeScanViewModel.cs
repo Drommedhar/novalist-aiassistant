@@ -3,11 +3,14 @@ using System.Threading;
 using System.Threading.Tasks;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using Novalist.Sdk.Services;
 
 namespace Novalist.Extensions.AiAssistant.ViewModels;
 
-public partial class KnowledgeScanViewModel : ObservableObject
+public partial class KnowledgeScanViewModel : ObservableObject, IDisposable
 {
+    public IExtensionLocalization? Loc { get; set; }
+
     [ObservableProperty]
     private double _progress;
 
@@ -57,5 +60,14 @@ public partial class KnowledgeScanViewModel : ObservableObject
         IsComplete = false;
         Progress = 0;
         Status = string.Empty;
+    }
+
+    private bool _disposed;
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+        try { _cts.Cancel(); } catch { }
+        _cts.Dispose();
     }
 }

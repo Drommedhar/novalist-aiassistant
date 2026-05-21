@@ -120,14 +120,15 @@ public class CopilotAcpClient : IDisposable
         _sessionId = null;
 
         try { p.StandardInput.Close(); } catch { /* ignore */ }
-        try { p.Kill(); } catch { /* ignore */ }
 
+        // Kill may hang on a wedged process; isolate behind a Task with a hard cap.
         await Task.Run(() =>
         {
+            try { p.Kill(entireProcessTree: true); } catch { /* ignore */ }
             try { p.WaitForExit(2000); } catch { /* ignore */ }
-        });
+        }).WaitAsync(TimeSpan.FromSeconds(5)).ContinueWith(_ => { /* swallow any timeout */ });
 
-        p.Dispose();
+        try { p.Dispose(); } catch { /* ignore */ }
     }
 
     /// <summary>Reset the session to clear server-side conversation history.</summary>
@@ -287,8 +288,9 @@ public class CopilotAcpClient : IDisposable
 
         SendMessage(new { jsonrpc = "2.0", id, method, @params = parameters });
 
-        // Timeout to avoid hanging forever
-        _ = Task.Delay(TimeSpan.FromMinutes(5)).ContinueWith(_ =>
+        // Timeout to avoid hanging forever. 60s is generous for normal RPC;
+        // streaming session requests handle their own cancellation outside of this.
+        _ = Task.Delay(TimeSpan.FromSeconds(60)).ContinueWith(_ =>
         {
             if (_pending.TryRemove(id, out var t))
                 t.TrySetException(new TimeoutException($"ACP request '{method}' timed out"));
@@ -460,7 +462,9 @@ public class CopilotAcpClient : IDisposable
 
     public void Dispose()
     {
-        StopAsync().GetAwaiter().GetResult();
+        // Fire-and-forget StopAsync to avoid blocking the calling thread
+        // (Dispose may be invoked from the UI thread during teardown).
+        _ = Task.Run(StopAsync);
         GC.SuppressFinalize(this);
     }
 }

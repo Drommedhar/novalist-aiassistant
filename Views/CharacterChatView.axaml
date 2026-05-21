@@ -91,7 +91,7 @@
             </StackPanel>
         </ScrollViewer>
 
-        <!-- Input -->
+        <!-- Input — Enter sends, Shift+Enter inserts a newline. -->
         <TextBox Grid.Row="3"
                  Text="{Binding UserInput, Mode=TwoWay}"
                  Watermark="{Binding Loc[characterChat.inputWatermark]}"
@@ -99,7 +99,9 @@
                  TextWrapping="Wrap"
                  MinHeight="60"
                  MaxHeight="160"
-                 Margin="8,4,8,4" />
+                 Margin="8,4,8,4"
+                 x:Name="ChatInput"
+                 KeyDown="OnChatInputKeyDown" />
 
         <!-- Action row: Reset on left, Send/Stop on right -->
         <Grid Grid.Row="4"

@@ -14,8 +14,26 @@ public sealed class AiAssistantExtension : IExtension, IRibbonContributor, ISide
     public string Id => "com.novalist.ai";
     public string DisplayName => "AI Assistant";
     public string Description => "AI-powered chat, story analysis, and scene statistics.";
-    public string Version => "1.0.0";
+    public string Version { get; } = ReadManifestVersion();
     public string Author => "Novalist Team";
+
+    private static string ReadManifestVersion()
+    {
+        try
+        {
+            var asmDir = Path.GetDirectoryName(typeof(AiAssistantExtension).Assembly.Location);
+            if (asmDir == null) return "0.0.0";
+            var manifestPath = Path.Combine(asmDir, "extension.json");
+            if (!File.Exists(manifestPath)) return "0.0.0";
+            using var stream = File.OpenRead(manifestPath);
+            using var doc = JsonDocument.Parse(stream);
+            return doc.RootElement.TryGetProperty("version", out var v) ? v.GetString() ?? "0.0.0" : "0.0.0";
+        }
+        catch
+        {
+            return "0.0.0";
+        }
+    }
 
     private IHostServices _host = null!;
     internal IHostServices Host => _host;
@@ -212,7 +230,11 @@ public sealed class AiAssistantExtension : IExtension, IRibbonContributor, ISide
     public void Shutdown()
     {
         _host.LanguageChanged -= OnLanguageChanged;
+        _chatVm?.Dispose();
+        _characterChatVm?.Dispose();
+        _analysisVm?.Dispose();
         _chatVm = null;
+        _characterChatVm = null;
         _analysisVm = null;
         _settingsVm = null;
     }

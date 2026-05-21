@@ -17,12 +17,12 @@
                 BorderThickness="0,0,0,1">
             <DockPanel>
                 <Button DockPanel.Dock="Right"
-                        Content="Clear"
+                        Content="{Binding Loc[ai.clearChat]}"
                         Command="{Binding ClearChatCommand}"
                         Classes="ribbonButton"
                         FontSize="14"
                         Padding="6,2" />
-                <TextBlock Text="AI Chat"
+                <TextBlock Text="{Binding Loc[ai.chatTitle]}"
                            FontSize="14"
                            FontWeight="SemiBold"
                            Foreground="{DynamicResource NormalText}"
@@ -49,22 +49,17 @@
                                     </Style>
                                 </Border.Styles>
                                 <StackPanel Spacing="4">
-                                    <TextBlock FontWeight="SemiBold"
+                                    <TextBlock Text="{Binding Role}"
+                                               FontWeight="SemiBold"
                                                FontSize="11"
-                                               Foreground="{DynamicResource DimText}">
-                                        <TextBlock.Text>
-                                            <MultiBinding StringFormat="{}{0}">
-                                                <Binding Path="Role" />
-                                            </MultiBinding>
-                                        </TextBlock.Text>
-                                    </TextBlock>
+                                               Foreground="{DynamicResource DimText}" />
                                     <SelectableTextBlock Text="{Binding Content}"
                                                TextWrapping="Wrap"
                                                FontSize="13"
                                                Foreground="{DynamicResource NormalText}" />
                                     <!-- Thinking expandable -->
                                     <Expander IsVisible="{Binding HasThinking}"
-                                              Header="Thinking"
+                                              Header="{Binding $parent[UserControl].DataContext.Loc[ai.thinking]}"
                                               FontSize="11"
                                               Padding="4">
                                         <SelectableTextBlock Text="{Binding Thinking}"
@@ -84,13 +79,13 @@
                         Background="{DynamicResource ExplorerBackground}"
                         IsVisible="{Binding IsGenerating}">
                     <StackPanel Spacing="4">
-                        <TextBlock Text="assistant"
+                        <TextBlock Text="{Binding Loc[ai.assistant]}"
                                    FontWeight="SemiBold"
                                    FontSize="11"
                                    Foreground="{DynamicResource DimText}" />
                         <!-- Thinking stream -->
                         <Expander IsVisible="{Binding HasThinking}"
-                                  Header="Thinking..."
+                                  Header="{Binding Loc[ai.thinkingDots]}"
                                   IsExpanded="{Binding IsThinkingExpanded}"
                                   FontSize="11"
                                   Padding="4">
@@ -120,8 +115,11 @@
             <Grid ColumnDefinitions="*,Auto">
                 <TextBox Grid.Column="0"
                          Text="{Binding UserInput, Mode=TwoWay}"
-                         Watermark="Ask the AI about your story..."
-                         AcceptsReturn="False"
+                         Watermark="{Binding Loc[ai.chatPlaceholder]}"
+                         AcceptsReturn="True"
+                         TextWrapping="Wrap"
+                         MinHeight="32"
+                         MaxHeight="120"
                          FontSize="13"
                          Padding="8,6"
                          x:Name="ChatInput"
@@ -138,7 +136,7 @@
                     <Button.Command>
                         <Binding Path="SendCommand" />
                     </Button.Command>
-                    <TextBlock Text="Send" />
+                    <TextBlock Text="{Binding Loc[ai.send]}" />
                 </Button>
                 <Button Grid.Column="1"
                         Margin="4,0,0,0"

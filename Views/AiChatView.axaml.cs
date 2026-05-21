@@ -13,7 +13,11 @@ public partial class AiChatView : UserControl
 
     private void OnChatInputKeyDown(object? sender, KeyEventArgs e)
     {
-        if (e.Key == Key.Enter && DataContext is AiChatViewModel vm && vm.SendCommand.CanExecute(null))
+        // Enter sends; Shift+Enter inserts a newline.
+        if (e.Key == Key.Enter
+            && (e.KeyModifiers & KeyModifiers.Shift) == 0
+            && DataContext is AiChatViewModel vm
+            && vm.SendCommand.CanExecute(null))
         {
             vm.SendCommand.Execute(null);
             e.Handled = true;

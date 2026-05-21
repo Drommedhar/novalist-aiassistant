@@ -7,6 +7,8 @@ namespace Novalist.Extensions.AiAssistant.Views;
 
 public partial class StoryAnalysisView : UserControl
 {
+    private StoryAnalysisViewModel? _vm;
+
     public StoryAnalysisView()
     {
         InitializeComponent();
@@ -15,8 +17,11 @@ public partial class StoryAnalysisView : UserControl
 
     private void OnDataContextChanged(object? sender, EventArgs e)
     {
-        if (DataContext is StoryAnalysisViewModel vm)
-            vm.PropertyChanged += OnViewModelPropertyChanged;
+        if (_vm != null)
+            _vm.PropertyChanged -= OnViewModelPropertyChanged;
+        _vm = DataContext as StoryAnalysisViewModel;
+        if (_vm != null)
+            _vm.PropertyChanged += OnViewModelPropertyChanged;
     }
 
     private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)
@@ -35,8 +40,12 @@ public partial class StoryAnalysisView : UserControl
 
     protected override void OnDetachedFromVisualTree(VisualTreeAttachmentEventArgs e)
     {
-        if (DataContext is StoryAnalysisViewModel vm)
-            vm.PropertyChanged -= OnViewModelPropertyChanged;
+        DataContextChanged -= OnDataContextChanged;
+        if (_vm != null)
+        {
+            _vm.PropertyChanged -= OnViewModelPropertyChanged;
+            _vm = null;
+        }
         base.OnDetachedFromVisualTree(e);
     }
 }
