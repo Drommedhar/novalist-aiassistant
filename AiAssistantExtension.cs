@@ -9,7 +9,7 @@ using Novalist.Sdk.Services;
 
 namespace Novalist.Extensions.AiAssistant;
 
-public sealed class AiAssistantExtension : IExtension, IRibbonContributor, ISidebarContributor, IContentViewContributor, ISettingsContributor, IGrammarCheckContributor, IContextMenuContributor, IWizardContributor
+public sealed class AiAssistantExtension : IExtension, IRibbonContributor, ISidebarContributor, IContentViewContributor, ISettingsContributor, IGrammarCheckContributor, IContextMenuContributor, IWizardContributor, Novalist.Sdk.Hooks.IWebViewContributor
 {
     public string Id => "com.novalist.ai";
     public string DisplayName => "AI Assistant";
@@ -500,4 +500,10 @@ public sealed class AiAssistantExtension : IExtension, IRibbonContributor, ISide
             }
         ];
     }
+
+    /// <summary>SDK v2: message controllers for the web-hosted panels.</summary>
+    public Novalist.Sdk.Hooks.IWebViewController? CreateController(string viewKey) =>
+        viewKey == "com.novalist.ai.chat.web"
+            ? new Services.ChatWebViewController(_host, this)
+            : null;
 }

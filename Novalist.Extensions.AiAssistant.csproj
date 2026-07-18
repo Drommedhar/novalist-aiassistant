@@ -8,6 +8,7 @@
   <ItemGroup>
     <Content Include="extension.json" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Locales\*.json" CopyToOutputDirectory="PreserveNewest" Link="Locales\%(Filename)%(Extension)" />
+    <Content Include="web\*.html" CopyToOutputDirectory="PreserveNewest" Link="web\%(Filename)%(Extension)" />
   </ItemGroup>
   <!-- Use local Sdk for development. CI/release builds use the NuGet package instead (see Directory.Build.props or pass /p:UseLocalSdk=false). -->
   <ItemGroup Condition="'$(UseLocalSdk)' != 'false'">
@@ -41,14 +42,19 @@
       <ExtensionDeployDir>$(HOME)/Library/Application Support/Novalist/Extensions/AiAssistant</ExtensionDeployDir>
     </PropertyGroup>
     <MakeDir Directories="$(ExtensionDeployDir)/Locales" />
+    <MakeDir Directories="$(ExtensionDeployDir)/web" />
     <Copy SourceFiles="$(OutputPath)Novalist.Extensions.AiAssistant.dll;$(OutputPath)extension.json"
           DestinationFolder="$(ExtensionDeployDir)"
           SkipUnchangedFiles="true" />
     <ItemGroup>
       <_LocaleFilesMac Include="$(OutputPath)Locales/*.*" />
+      <_WebFilesMac Include="$(OutputPath)web/*.*" />
     </ItemGroup>
     <Copy SourceFiles="@(_LocaleFilesMac)"
           DestinationFolder="$(ExtensionDeployDir)/Locales"
+          SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(_WebFilesMac)"
+          DestinationFolder="$(ExtensionDeployDir)/web"
           SkipUnchangedFiles="true" />
   </Target>
 </Project>

@@ -8,5 +8,20 @@
   "minHostVersion": "1.12.0",
   "maxHostVersion": "",
   "dependencies": [],
-  "tags": ["ai", "analysis", "chat"]
+  "tags": [
+    "ai",
+    "analysis",
+    "chat"
+  ],
+  "contributes": {
+    "views": [
+      {
+        "key": "com.novalist.ai.chat.web",
+        "title": "AI Chat",
+        "iconPath": "M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z",
+        "placement": "main",
+        "entry": "web/chat.html"
+      }
+    ]
+  }
 }
