@@ -507,6 +507,7 @@ public sealed class AiAssistantExtension : IExtension, IRibbonContributor, ISide
         "com.novalist.ai.chat.web" => new Services.ChatWebViewController(_host, this),
         "com.novalist.ai.characterChat.web" =>
             new Services.CharacterChatWebViewController(_host, this, () => _knowledgeService),
+        "com.novalist.ai.analysis.web" => new Services.StoryAnalysisWebViewController(_host, this),
         _ => null
     };
 }
