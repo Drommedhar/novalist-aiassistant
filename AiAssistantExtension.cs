@@ -502,8 +502,11 @@ public sealed class AiAssistantExtension : IExtension, IRibbonContributor, ISide
     }
 
     /// <summary>SDK v2: message controllers for the web-hosted panels.</summary>
-    public Novalist.Sdk.Hooks.IWebViewController? CreateController(string viewKey) =>
-        viewKey == "com.novalist.ai.chat.web"
-            ? new Services.ChatWebViewController(_host, this)
-            : null;
+    public Novalist.Sdk.Hooks.IWebViewController? CreateController(string viewKey) => viewKey switch
+    {
+        "com.novalist.ai.chat.web" => new Services.ChatWebViewController(_host, this),
+        "com.novalist.ai.characterChat.web" =>
+            new Services.CharacterChatWebViewController(_host, this, () => _knowledgeService),
+        _ => null
+    };
 }

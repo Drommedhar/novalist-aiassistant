@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Character Chat</title>
+<style>
+:root {
+  --bg: #1e1e1e; --card: #252526; --border: #333; --text: #e6edf3;
+  --dim: #b9bac5; --subtle: #848b91; --accent: #0e8bdf;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  display: flex; flex-direction: column;
+  font: 13px/1.5 system-ui, sans-serif;
+  background: var(--bg); color: var(--text);
+}
+#setup { display: flex; gap: 8px; padding: 10px; border-bottom: 1px solid var(--border); }
+select {
+  flex: 1; font: inherit; color: var(--text); background: var(--card);
+  border: 1px solid var(--border); border-radius: 8px; padding: 6px;
+}
+#status { font-size: 11px; color: var(--subtle); padding: 0 12px; }
+#turns { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+.turn { max-width: 85%; padding: 8px 12px; border-radius: 10px; white-space: pre-wrap; }
+.turn .speaker { font-size: 11px; color: var(--subtle); margin-bottom: 2px; }
+.turn.user { align-self: flex-end; background: var(--accent); color: #fff; }
+.turn.character { align-self: flex-start; background: var(--card); border: 1px solid var(--border); }
+#composer { display: flex; gap: 8px; padding: 10px; border-top: 1px solid var(--border); }
+#input {
+  flex: 1; resize: none; font: inherit; color: var(--text);
+  background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 8px;
+}
+button {
+  font: inherit; border: none; border-radius: 8px; padding: 8px 14px;
+  background: var(--accent); color: #fff; cursor: pointer;
+}
+button.secondary { background: var(--card); color: var(--dim); border: 1px solid var(--border); }
+button:disabled { opacity: .5; cursor: default; }
+</style>
+</head>
+<body>
+<div id="setup">
+  <select id="character"></select>
+  <select id="scene"></select>
+</div>
+<div id="status"></div>
+<div id="turns"></div>
+<div id="composer">
+  <textarea id="input" rows="2" placeholder="Speak with your character..."></textarea>
+  <button id="send">Send</button>
+  <button id="cancel" class="secondary" hidden>Stop</button>
+  <button id="reset" class="secondary">Reset</button>
+</div>
+<script>
+const characterEl = document.getElementById('character');
+const sceneEl = document.getElementById('scene');
+const statusEl = document.getElementById('status');
+const turnsEl = document.getElementById('turns');
+const inputEl = document.getElementById('input');
+const sendBtn = document.getElementById('send');
+const cancelBtn = document.getElementById('cancel');
+const resetBtn = document.getElementById('reset');
+let streamEl = null;
+
+function post(msg) {
+  parent.postMessage({ novalistExt: JSON.stringify(msg) }, '*');
+}
+
+function addTurn(speaker, text, isCharacter) {
+  const el = document.createElement('div');
+  el.className = 'turn ' + (isCharacter ? 'character' : 'user');
+  const sp = document.createElement('div');
+  sp.className = 'speaker';
+  sp.textContent = speaker;
+  el.appendChild(sp);
+  el.appendChild(document.createTextNode(text));
+  turnsEl.appendChild(el);
+  turnsEl.scrollTop = turnsEl.scrollHeight;
+}
+
+function fillSelect(el, options, selectedId) {
+  el.textContent = '';
+  for (const option of options) {
+    const node = document.createElement('option');
+    node.value = option.id;
+    node.textContent = option.name || option.label;
+    if (option.id === selectedId) node.selected = true;
+    el.appendChild(node);
+  }
+}
+
+window.addEventListener('message', (event) => {
+  const raw = event.data && event.data.novalistHost;
+  if (typeof raw !== 'string') return;
+  const msg = JSON.parse(raw);
+  if (msg.type === 'setup') {
+    fillSelect(characterEl, msg.characters, msg.selectedCharacterId);
+    fillSelect(sceneEl, msg.scenes, msg.selectedSceneId);
+    turnsEl.textContent = '';
+    for (const t of msg.turns) addTurn(t.speaker, t.text, t.isCharacter);
+  } else if (msg.type === 'turn') {
+    if (streamEl) { streamEl.remove(); streamEl = null; }
+    addTurn(msg.speaker, msg.text, msg.isCharacter);
+  } else if (msg.type === 'state') {
+    sendBtn.disabled = msg.isGenerating || msg.isPreparing;
+    cancelBtn.hidden = !msg.isGenerating;
+    statusEl.textContent = msg.isPreparing ? msg.preparationStatus : '';
+    if (msg.isGenerating && msg.streaming) {
+      if (!streamEl) {
+        streamEl = document.createElement('div');
+        streamEl.className = 'turn character';
+        turnsEl.appendChild(streamEl);
+      }
+      streamEl.textContent = msg.streaming;
+      turnsEl.scrollTop = turnsEl.scrollHeight;
+    }
+    if (!msg.isGenerating && streamEl) { streamEl.remove(); streamEl = null; }
+  }
+});
+
+characterEl.addEventListener('change', () => post({ type: 'selectCharacter', id: characterEl.value }));
+sceneEl.addEventListener('change', () => post({ type: 'selectScene', id: sceneEl.value }));
+
+function send() {
+  const text = inputEl.value.trim();
+  if (!text) return;
+  inputEl.value = '';
+  post({ type: 'send', text });
+}
+
+sendBtn.addEventListener('click', send);
+cancelBtn.addEventListener('click', () => post({ type: 'cancel' }));
+resetBtn.addEventListener('click', () => { turnsEl.textContent = ''; post({ type: 'reset' }); });
+inputEl.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+});
+
+post({ type: 'hydrate' });
+</script>
+</body>
+</html>
