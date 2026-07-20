@@ -326,10 +326,11 @@ public sealed class AiAssistantExtension : IExtension, IRibbonContributor, ISide
                 Bool("enabled", _loc.T("settings.aiEnabled"), Settings.Enabled, providerGroup, _loc.T("settings.aiEnabledDesc")),
                 Select("provider", _loc.T("settings.aiProvider"), Settings.Provider, ["lmstudio", "copilot"], providerGroup),
                 Text("lmStudioBaseUrl", _loc.T("settings.aiBaseUrl"), Settings.LmStudioBaseUrl, providerGroup, "provider", LmStudio),
-                Text("lmStudioModel", _loc.T("settings.aiModel"), Settings.LmStudioModel, providerGroup, "provider", LmStudio),
+                Text("lmStudioModel", _loc.T("settings.aiModel"), Settings.LmStudioModel, providerGroup, "provider", LmStudio, _availableModels),
                 Password("lmStudioApiToken", _loc.T("settings.aiApiToken"), Settings.LmStudioApiToken, providerGroup, "provider", LmStudio),
                 Text("copilotPath", _loc.T("settings.aiCopilotPath"), Settings.CopilotPath, providerGroup, "provider", Copilot),
-                Text("copilotModel", _loc.T("settings.aiCopilotModel"), Settings.CopilotModel, providerGroup, "provider", Copilot),
+                Text("copilotModel", _loc.T("settings.aiCopilotModel"), Settings.CopilotModel, providerGroup, "provider", Copilot, _availableModels),
+                Action("refreshModels", _loc.T("settings.aiRefreshModels"), providerGroup, null, []),
                 Number("temperature", _loc.T("settings.aiTemperature"), Settings.Temperature, 0, 2, paramsGroup),
                 Number("contextLength", _loc.T("settings.aiContextLength"), Settings.ContextLength, 0, 131072, paramsGroup),
                 Number("topP", "Top P", Settings.TopP, 0, 1, paramsGroup),
@@ -391,11 +392,46 @@ public sealed class AiAssistantExtension : IExtension, IRibbonContributor, ISide
         return Task.CompletedTask;
     }
 
+    public async Task<SettingsSchema?> ExecuteSchemaActionAsync(string actionKey, IReadOnlyDictionary<string, string> values)
+    {
+        if (actionKey != "refreshModels") return null;
+
+        // Reflect the form's (possibly unsaved) connection settings so the model
+        // list matches what the user is about to save, then query the provider.
+        string Read(string key, string current) => values.TryGetValue(key, out var v) ? v : current;
+        Settings.Provider = Read("provider", Settings.Provider);
+        Settings.LmStudioBaseUrl = Read("lmStudioBaseUrl", Settings.LmStudioBaseUrl);
+        Settings.LmStudioApiToken = Read("lmStudioApiToken", Settings.LmStudioApiToken);
+        Settings.CopilotPath = Read("copilotPath", Settings.CopilotPath);
+        ConfigureAiService();
+
+        try
+        {
+            var models = await AiService.ListModelsAsync();
+            _availableModels = models
+                .Select(m => m.Key)
+                .Where(k => !string.IsNullOrWhiteSpace(k))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+        catch
+        {
+            _availableModels = [];
+        }
+        return GetSettingsSchema();
+    }
+
     private static readonly string[] LmStudio = ["lmstudio"];
     private static readonly string[] Copilot = ["copilot"];
 
-    private static SettingsField Text(string key, string label, string value, string? group = null, string? whenKey = null, IReadOnlyList<string>? whenValues = null)
-        => new() { Key = key, Label = label, Type = SettingsFieldType.Text, Value = value ?? string.Empty, Group = group, VisibleWhenKey = whenKey, VisibleWhenValues = whenValues };
+    // Models fetched from the active provider by the "Refresh models" action,
+    // offered as autocomplete suggestions on the model fields.
+    private List<string> _availableModels = [];
+
+    private static SettingsField Text(string key, string label, string value, string? group = null, string? whenKey = null, IReadOnlyList<string>? whenValues = null, IReadOnlyList<string>? suggestions = null)
+        => new() { Key = key, Label = label, Type = SettingsFieldType.Text, Value = value ?? string.Empty, Group = group, VisibleWhenKey = whenKey, VisibleWhenValues = whenValues, Suggestions = suggestions };
+    private static SettingsField Action(string key, string label, string? group, string? whenKey, IReadOnlyList<string> whenValues)
+        => new() { Key = key, Label = label, Type = SettingsFieldType.Action, Group = group, VisibleWhenKey = whenKey, VisibleWhenValues = whenValues };
     private static SettingsField Password(string key, string label, string value, string? group, string? whenKey = null, IReadOnlyList<string>? whenValues = null)
         => new() { Key = key, Label = label, Type = SettingsFieldType.Password, Value = value ?? string.Empty, Group = group, VisibleWhenKey = whenKey, VisibleWhenValues = whenValues };
     private static SettingsField Multiline(string key, string label, string value, string? group, string? help)
