@@ -325,11 +325,11 @@ public sealed class AiAssistantExtension : IExtension, IRibbonContributor, ISide
             [
                 Bool("enabled", _loc.T("settings.aiEnabled"), Settings.Enabled, providerGroup, _loc.T("settings.aiEnabledDesc")),
                 Select("provider", _loc.T("settings.aiProvider"), Settings.Provider, ["lmstudio", "copilot"], providerGroup),
-                Text("lmStudioBaseUrl", _loc.T("settings.aiBaseUrl"), Settings.LmStudioBaseUrl, providerGroup),
-                Text("lmStudioModel", _loc.T("settings.aiModel"), Settings.LmStudioModel, providerGroup),
-                Password("lmStudioApiToken", _loc.T("settings.aiApiToken"), Settings.LmStudioApiToken, providerGroup),
-                Text("copilotPath", _loc.T("settings.aiCopilotPath"), Settings.CopilotPath, providerGroup),
-                Text("copilotModel", _loc.T("settings.aiCopilotModel"), Settings.CopilotModel, providerGroup),
+                Text("lmStudioBaseUrl", _loc.T("settings.aiBaseUrl"), Settings.LmStudioBaseUrl, providerGroup, "provider", LmStudio),
+                Text("lmStudioModel", _loc.T("settings.aiModel"), Settings.LmStudioModel, providerGroup, "provider", LmStudio),
+                Password("lmStudioApiToken", _loc.T("settings.aiApiToken"), Settings.LmStudioApiToken, providerGroup, "provider", LmStudio),
+                Text("copilotPath", _loc.T("settings.aiCopilotPath"), Settings.CopilotPath, providerGroup, "provider", Copilot),
+                Text("copilotModel", _loc.T("settings.aiCopilotModel"), Settings.CopilotModel, providerGroup, "provider", Copilot),
                 Number("temperature", _loc.T("settings.aiTemperature"), Settings.Temperature, 0, 2, paramsGroup),
                 Number("contextLength", _loc.T("settings.aiContextLength"), Settings.ContextLength, 0, 131072, paramsGroup),
                 Number("topP", "Top P", Settings.TopP, 0, 1, paramsGroup),
@@ -391,10 +391,13 @@ public sealed class AiAssistantExtension : IExtension, IRibbonContributor, ISide
         return Task.CompletedTask;
     }
 
-    private static SettingsField Text(string key, string label, string value, string? group = null)
-        => new() { Key = key, Label = label, Type = SettingsFieldType.Text, Value = value ?? string.Empty, Group = group };
-    private static SettingsField Password(string key, string label, string value, string? group)
-        => new() { Key = key, Label = label, Type = SettingsFieldType.Password, Value = value ?? string.Empty, Group = group };
+    private static readonly string[] LmStudio = ["lmstudio"];
+    private static readonly string[] Copilot = ["copilot"];
+
+    private static SettingsField Text(string key, string label, string value, string? group = null, string? whenKey = null, IReadOnlyList<string>? whenValues = null)
+        => new() { Key = key, Label = label, Type = SettingsFieldType.Text, Value = value ?? string.Empty, Group = group, VisibleWhenKey = whenKey, VisibleWhenValues = whenValues };
+    private static SettingsField Password(string key, string label, string value, string? group, string? whenKey = null, IReadOnlyList<string>? whenValues = null)
+        => new() { Key = key, Label = label, Type = SettingsFieldType.Password, Value = value ?? string.Empty, Group = group, VisibleWhenKey = whenKey, VisibleWhenValues = whenValues };
     private static SettingsField Multiline(string key, string label, string value, string? group, string? help)
         => new() { Key = key, Label = label, Type = SettingsFieldType.Multiline, Value = value ?? string.Empty, Group = group, Help = help };
     private static SettingsField Bool(string key, string label, bool value, string? group, string? help)
