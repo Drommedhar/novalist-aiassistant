@@ -1,7 +1,5 @@
 using System.Text.Json;
 using Novalist.Extensions.AiAssistant.Services;
-using Novalist.Extensions.AiAssistant.ViewModels;
-using Novalist.Extensions.AiAssistant.Views;
 using Novalist.Sdk;
 using Novalist.Sdk.Hooks;
 using Novalist.Sdk.Models;
@@ -9,7 +7,7 @@ using Novalist.Sdk.Services;
 
 namespace Novalist.Extensions.AiAssistant;
 
-public sealed class AiAssistantExtension : IExtension, IRibbonContributor, ISidebarContributor, IContentViewContributor, ISettingsContributor, ISettingsSchemaContributor, IGrammarCheckContributor, IContextMenuContributor, IWizardContributor, Novalist.Sdk.Hooks.IWebViewContributor
+public sealed class AiAssistantExtension : IExtension, IRibbonContributor, ISettingsSchemaContributor, IGrammarCheckContributor, IContextMenuContributor, IWizardContributor, Novalist.Sdk.Hooks.IWebViewContributor
 {
     public string Id => "com.novalist.ai";
     public string DisplayName => "AI Assistant";
@@ -46,10 +44,6 @@ public sealed class AiAssistantExtension : IExtension, IRibbonContributor, ISide
     private InlineRewriteService? _inlineRewriteService;
     private SceneSynopsisService? _synopsisService;
 
-    private AiChatViewModel? _chatVm;
-    private CharacterChatViewModel? _characterChatVm;
-    private StoryAnalysisViewModel? _analysisVm;
-    private AiSettingsViewModel? _settingsVm;
     private bool _isChatVisible;
     private bool _isCharacterChatVisible;
     private bool _isAnalysisVisible;
@@ -230,13 +224,6 @@ public sealed class AiAssistantExtension : IExtension, IRibbonContributor, ISide
     public void Shutdown()
     {
         _host.LanguageChanged -= OnLanguageChanged;
-        _chatVm?.Dispose();
-        _characterChatVm?.Dispose();
-        _analysisVm?.Dispose();
-        _chatVm = null;
-        _characterChatVm = null;
-        _analysisVm = null;
-        _settingsVm = null;
     }
 
     // ── IWizardContributor ──────────────────────────────────────────
@@ -308,8 +295,7 @@ public sealed class AiAssistantExtension : IExtension, IRibbonContributor, ISide
     }
 
     // ── ISettingsSchemaContributor (declarative advanced settings) ──
-    // The Avalonia AiSettingsView cannot render on the Electron host, so the
-    // same AiSettings fields are also exposed as a declarative schema the host
+    // The AiSettings fields are exposed as a declarative schema the host
     // renders as a form. Values round-trip through the same "ai" host-data key.
 
     public SettingsSchema GetSettingsSchema()
@@ -554,91 +540,6 @@ public sealed class AiAssistantExtension : IExtension, IRibbonContributor, ISide
             _host.ActivateContentView("com.novalist.ai.analysis");
         else
             _host.ActivateContentView("");
-    }
-
-    // ── ISidebarContributor (right sidebar for AI Chat) ─────────────
-
-    public IReadOnlyList<SidebarPanel> GetSidebarPanels()
-    {
-        return
-        [
-            new SidebarPanel
-            {
-                Id = "com.novalist.ai.chat",
-                Label = _loc.T("ribbon.aiChat"),
-                IconPath = IconMessageSquare,
-                Side = "Context",
-                Tooltip = _loc.T("ribbon.aiChatTooltip"),
-                CreateView = () =>
-                {
-                    _chatVm ??= new AiChatViewModel(_host, this);
-                    return new AiChatView { DataContext = _chatVm };
-                }
-            },
-            new SidebarPanel
-            {
-                Id = "com.novalist.ai.characterChat",
-                Label = _loc.T("ribbon.characterChat"),
-                IconPath = IconUser,
-                Side = "Context",
-                Tooltip = _loc.T("ribbon.characterChatTooltip"),
-                CreateView = () =>
-                {
-                    if (_characterChatVm == null)
-                    {
-                        _characterChatVm = new CharacterChatViewModel(_host, this, () => _knowledgeService);
-                        _ = _characterChatVm.ReloadAsync();
-                    }
-                    return new CharacterChatView { DataContext = _characterChatVm };
-                }
-            }
-        ];
-    }
-
-    // ── IContentViewContributor (Story Analysis as full content view) ─
-
-    public IReadOnlyList<ContentViewDescriptor> GetContentViews()
-    {
-        return
-        [
-            new ContentViewDescriptor
-            {
-                ViewKey = "com.novalist.ai.analysis",
-                DisplayName = _loc.T("ribbon.storyAnalysis"),
-                IconPath = IconSearch,
-                CreateView = () =>
-                {
-                    _analysisVm ??= new StoryAnalysisViewModel(_host, this);
-                    return new StoryAnalysisView { DataContext = _analysisVm };
-                },
-                OnActivated = () =>
-                {
-                    _isAnalysisVisible = true;
-                    _analysisVm?.RefreshChapters();
-                },
-                OnDeactivated = () => _isAnalysisVisible = false,
-            }
-        ];
-    }
-
-    // ── ISettingsContributor ────────────────────────────────────────
-
-    public IReadOnlyList<SettingsPage> GetSettingsPages()
-    {
-        return
-        [
-            new SettingsPage
-            {
-                Category = _loc.T("settings.ai"),
-                IconPath = IconMessageSquare,
-                CreateView = () =>
-                {
-                    _settingsVm ??= new AiSettingsViewModel(this, _loc);
-                    return new AiSettingsView { DataContext = _settingsVm };
-                },
-                OnSave = () => SaveSettings(),
-            }
-        ];
     }
 
     /// <summary>SDK v2: message controllers for the web-hosted panels.</summary>

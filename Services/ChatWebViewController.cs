@@ -10,7 +10,7 @@ namespace Novalist.Extensions.AiAssistant.Services;
 /// <summary>
 /// SDK v2 bridge for the AI chat webview: wraps the existing AiChatViewModel
 /// so the web page runs the exact same logic (story-context system prompt,
-/// AI hooks, streaming, cancel) as the Avalonia sidebar did.
+/// AI hooks, streaming, cancel) as the sidebar did.
 /// </summary>
 public sealed class ChatWebViewController : IWebViewController, IDisposable
 {
