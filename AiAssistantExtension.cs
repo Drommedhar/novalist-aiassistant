@@ -9,7 +9,7 @@ using Novalist.Sdk.Services;
 
 namespace Novalist.Extensions.AiAssistant;
 
-public sealed class AiAssistantExtension : IExtension, IRibbonContributor, ISidebarContributor, IContentViewContributor, ISettingsContributor, IGrammarCheckContributor, IContextMenuContributor, IWizardContributor, Novalist.Sdk.Hooks.IWebViewContributor
+public sealed class AiAssistantExtension : IExtension, IRibbonContributor, ISidebarContributor, IContentViewContributor, ISettingsContributor, ISettingsSchemaContributor, IGrammarCheckContributor, IContextMenuContributor, IWizardContributor, Novalist.Sdk.Hooks.IWebViewContributor
 {
     public string Id => "com.novalist.ai";
     public string DisplayName => "AI Assistant";
@@ -306,6 +306,107 @@ public sealed class AiAssistantExtension : IExtension, IRibbonContributor, ISide
         _ = _host.WriteHostDataAsync("ai", json);
         ConfigureAiService();
     }
+
+    // ── ISettingsSchemaContributor (declarative advanced settings) ──
+    // The Avalonia AiSettingsView cannot render on the Electron host, so the
+    // same AiSettings fields are also exposed as a declarative schema the host
+    // renders as a form. Values round-trip through the same "ai" host-data key.
+
+    public SettingsSchema GetSettingsSchema()
+    {
+        var providerGroup = _loc.T("settings.aiConnection");
+        var paramsGroup = _loc.T("settings.aiParameters");
+        var checksGroup = _loc.T("settings.aiAnalysisChecks");
+        var knowledgeGroup = _loc.T("settings.knowledgeSection");
+        return new SettingsSchema
+        {
+            Title = _loc.T("settings.ai"),
+            Fields =
+            [
+                Bool("enabled", _loc.T("settings.aiEnabled"), Settings.Enabled, providerGroup, _loc.T("settings.aiEnabledDesc")),
+                Select("provider", _loc.T("settings.aiProvider"), Settings.Provider, ["lmstudio", "copilot"], providerGroup),
+                Text("lmStudioBaseUrl", _loc.T("settings.aiBaseUrl"), Settings.LmStudioBaseUrl, providerGroup),
+                Text("lmStudioModel", _loc.T("settings.aiModel"), Settings.LmStudioModel, providerGroup),
+                Password("lmStudioApiToken", _loc.T("settings.aiApiToken"), Settings.LmStudioApiToken, providerGroup),
+                Text("copilotPath", _loc.T("settings.aiCopilotPath"), Settings.CopilotPath, providerGroup),
+                Text("copilotModel", _loc.T("settings.aiCopilotModel"), Settings.CopilotModel, providerGroup),
+                Number("temperature", _loc.T("settings.aiTemperature"), Settings.Temperature, 0, 2, paramsGroup),
+                Number("contextLength", _loc.T("settings.aiContextLength"), Settings.ContextLength, 0, 131072, paramsGroup),
+                Number("topP", "Top P", Settings.TopP, 0, 1, paramsGroup),
+                Number("minP", "Min P", Settings.MinP, 0, 1, paramsGroup),
+                Number("frequencyPenalty", _loc.T("settings.aiFrequencyPenalty"), Settings.FrequencyPenalty, 0, 2, paramsGroup),
+                Number("repeatLastN", _loc.T("settings.aiRepeatLastN"), Settings.RepeatLastN, 0, 1024, paramsGroup),
+                Bool("checkReferences", _loc.T("settings.aiCheckReferences"), Settings.CheckReferences, checksGroup, null),
+                Bool("checkInconsistencies", _loc.T("settings.aiCheckInconsistencies"), Settings.CheckInconsistencies, checksGroup, null),
+                Bool("checkSuggestions", _loc.T("settings.aiCheckSuggestions"), Settings.CheckSuggestions, checksGroup, null),
+                Bool("checkSceneStats", _loc.T("settings.aiCheckSceneStats"), Settings.CheckSceneStats, checksGroup, null),
+                Bool("disableRegexReferences", _loc.T("settings.aiDisableRegex"), Settings.DisableRegexReferences, checksGroup, null),
+                Bool("grammarCheckEnabled", _loc.T("settings.aiGrammarCheckEnabled"), Settings.GrammarCheckEnabled, checksGroup, _loc.T("settings.aiGrammarCheckEnabledDesc")),
+                Bool("enableCharacterKnowledge", _loc.T("settings.knowledgeEnable"), Settings.EnableCharacterKnowledge, knowledgeGroup, _loc.T("settings.knowledgeDesc")),
+                Number("maxParallelPrompts", _loc.T("settings.knowledgeMaxParallel"), Settings.MaxParallelPrompts, 1, 32, knowledgeGroup),
+                Text("responseLanguage", _loc.T("settings.aiResponseLanguage"), Settings.ResponseLanguage, paramsGroup),
+                Multiline("systemPrompt", _loc.T("settings.aiSystemPrompt"), Settings.SystemPrompt, paramsGroup, _loc.T("settings.aiSystemPromptDesc")),
+            ]
+        };
+    }
+
+    public Task ApplySettingsAsync(IReadOnlyDictionary<string, string> values)
+    {
+        var inv = System.Globalization.CultureInfo.InvariantCulture;
+        bool ReadBool(string key, bool current)
+            => values.TryGetValue(key, out var v) ? string.Equals(v, "true", StringComparison.OrdinalIgnoreCase) : current;
+        string ReadStr(string key, string current) => values.TryGetValue(key, out var v) ? v : current;
+        double ReadNum(string key, double current, double min, double max)
+            => values.TryGetValue(key, out var v) && double.TryParse(v, System.Globalization.NumberStyles.Any, inv, out var n)
+                ? Math.Clamp(n, min, max) : current;
+        int ReadInt(string key, int current, int min, int max)
+            => values.TryGetValue(key, out var v) && int.TryParse(v, System.Globalization.NumberStyles.Any, inv, out var n)
+                ? Math.Clamp(n, min, max) : current;
+
+        Settings.Enabled = ReadBool("enabled", Settings.Enabled);
+        Settings.Provider = ReadStr("provider", Settings.Provider);
+        Settings.LmStudioBaseUrl = ReadStr("lmStudioBaseUrl", Settings.LmStudioBaseUrl);
+        Settings.LmStudioModel = ReadStr("lmStudioModel", Settings.LmStudioModel);
+        Settings.LmStudioApiToken = ReadStr("lmStudioApiToken", Settings.LmStudioApiToken);
+        Settings.CopilotPath = ReadStr("copilotPath", Settings.CopilotPath);
+        Settings.CopilotModel = ReadStr("copilotModel", Settings.CopilotModel);
+        Settings.Temperature = ReadNum("temperature", Settings.Temperature, 0, 2);
+        Settings.ContextLength = ReadInt("contextLength", Settings.ContextLength, 0, 131072);
+        Settings.TopP = ReadNum("topP", Settings.TopP, 0, 1);
+        Settings.MinP = ReadNum("minP", Settings.MinP, 0, 1);
+        Settings.FrequencyPenalty = ReadNum("frequencyPenalty", Settings.FrequencyPenalty, 0, 2);
+        Settings.RepeatLastN = ReadInt("repeatLastN", Settings.RepeatLastN, 0, 1024);
+        Settings.CheckReferences = ReadBool("checkReferences", Settings.CheckReferences);
+        Settings.CheckInconsistencies = ReadBool("checkInconsistencies", Settings.CheckInconsistencies);
+        Settings.CheckSuggestions = ReadBool("checkSuggestions", Settings.CheckSuggestions);
+        Settings.CheckSceneStats = ReadBool("checkSceneStats", Settings.CheckSceneStats);
+        Settings.DisableRegexReferences = ReadBool("disableRegexReferences", Settings.DisableRegexReferences);
+        Settings.GrammarCheckEnabled = ReadBool("grammarCheckEnabled", Settings.GrammarCheckEnabled);
+        Settings.EnableCharacterKnowledge = ReadBool("enableCharacterKnowledge", Settings.EnableCharacterKnowledge);
+        Settings.MaxParallelPrompts = ReadInt("maxParallelPrompts", Settings.MaxParallelPrompts, 1, 32);
+        Settings.ResponseLanguage = ReadStr("responseLanguage", Settings.ResponseLanguage);
+        Settings.SystemPrompt = ReadStr("systemPrompt", Settings.SystemPrompt);
+
+        SaveSettings();
+        return Task.CompletedTask;
+    }
+
+    private static SettingsField Text(string key, string label, string value, string? group = null)
+        => new() { Key = key, Label = label, Type = SettingsFieldType.Text, Value = value ?? string.Empty, Group = group };
+    private static SettingsField Password(string key, string label, string value, string? group)
+        => new() { Key = key, Label = label, Type = SettingsFieldType.Password, Value = value ?? string.Empty, Group = group };
+    private static SettingsField Multiline(string key, string label, string value, string? group, string? help)
+        => new() { Key = key, Label = label, Type = SettingsFieldType.Multiline, Value = value ?? string.Empty, Group = group, Help = help };
+    private static SettingsField Bool(string key, string label, bool value, string? group, string? help)
+        => new() { Key = key, Label = label, Type = SettingsFieldType.Bool, Value = value ? "true" : "false", Group = group, Help = help };
+    private static SettingsField Select(string key, string label, string value, IReadOnlyList<string> options, string? group)
+        => new() { Key = key, Label = label, Type = SettingsFieldType.Select, Value = value ?? string.Empty, Options = options, Group = group };
+    private static SettingsField Number(string key, string label, double value, double min, double max, string? group)
+        => new()
+        {
+            Key = key, Label = label, Type = SettingsFieldType.Number,
+            Value = value.ToString(System.Globalization.CultureInfo.InvariantCulture), Min = min, Max = max, Group = group
+        };
 
     internal void ConfigureAiService()
     {
