@@ -118,6 +118,11 @@
     "success": "Synopsis updated.",
     "failedReason": "Synopsis generation failed: {0}"
   },
+  "article": {
+    "noModel": "AI model is not available.",
+    "emptyResult": "The model returned an empty summary.",
+    "failedReason": "Summary generation failed: {0}"
+  },
   "ai": {
     "chatTitle": "AI Chat",
     "chatPlaceholder": "Ask the AI about your story...",

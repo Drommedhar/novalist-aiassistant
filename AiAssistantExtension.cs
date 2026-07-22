@@ -7,7 +7,7 @@ using Novalist.Sdk.Services;
 
 namespace Novalist.Extensions.AiAssistant;
 
-public sealed class AiAssistantExtension : IExtension, IRibbonContributor, ISettingsSchemaContributor, IGrammarCheckContributor, IContextMenuContributor, IWizardContributor, Novalist.Sdk.Hooks.IWebViewContributor
+public sealed class AiAssistantExtension : IExtension, IRibbonContributor, ISettingsSchemaContributor, IGrammarCheckContributor, IArticleGeneratorContributor, IContextMenuContributor, IWizardContributor, Novalist.Sdk.Hooks.IWebViewContributor
 {
     public string Id => "com.novalist.ai";
     public string DisplayName => "AI Assistant";
@@ -43,6 +43,7 @@ public sealed class AiAssistantExtension : IExtension, IRibbonContributor, ISett
     private KnowledgeBuilder? _knowledgeBuilder;
     private InlineRewriteService? _inlineRewriteService;
     private SceneSynopsisService? _synopsisService;
+    private ArticleGeneratorService? _articleGenerator;
 
     private bool _isChatVisible;
     private bool _isCharacterChatVisible;
@@ -74,6 +75,20 @@ public sealed class AiAssistantExtension : IExtension, IRibbonContributor, ISett
         return _grammarCheckService.CheckAsync(plainText, language, cancellationToken);
     }
 
+    // ── IArticleGeneratorContributor ────────────────────────────────
+
+    public string ArticleGeneratorName => "AI Assistant";
+
+    public bool IsArticleGeneratorEnabled => Settings.Enabled && _articleGenerator != null;
+
+    public Task<ArticleGenerationResult> GenerateAsync(
+        ArticleGenerationRequest request, CancellationToken cancellationToken = default)
+    {
+        if (_articleGenerator == null)
+            return Task.FromResult(new ArticleGenerationResult { Error = _loc.T("article.noModel") });
+        return _articleGenerator.GenerateAsync(request, cancellationToken);
+    }
+
     // Icon paths (Lucide)
     private const string IconMessageSquare = "M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z";
     private const string IconSearch = "M11 17.25a6.25 6.25 0 1 1 0-12.5 6.25 6.25 0 0 1 0 12.5zm0 0L16.65 22.9";
@@ -99,6 +114,7 @@ public sealed class AiAssistantExtension : IExtension, IRibbonContributor, ISett
         host.RegisterInlineActionContributor(_inlineRewriteService);
 
         _synopsisService = new SceneSynopsisService(AiService, host, _loc);
+        _articleGenerator = new ArticleGeneratorService(AiService, _loc);
 
         host.LanguageChanged += OnLanguageChanged;
         host.SceneOpened += scene =>

@@ -118,6 +118,11 @@
     "success": "Synopsis aktualisiert.",
     "failedReason": "Synopsis-Generierung fehlgeschlagen: {0}"
   },
+  "article": {
+    "noModel": "KI-Modell ist nicht verfügbar.",
+    "emptyResult": "Das Modell lieferte eine leere Zusammenfassung.",
+    "failedReason": "Zusammenfassung fehlgeschlagen: {0}"
+  },
   "ai": {
     "chatTitle": "KI-Chat",
     "chatPlaceholder": "Frage die KI über deine Geschichte...",
