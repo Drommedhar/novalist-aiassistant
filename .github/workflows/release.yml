@@ -47,7 +47,8 @@ jobs:
           zip ${{ github.workspace }}/${{ env.EXTENSION_ID }}.zip \
             Novalist.Extensions.AiAssistant.dll \
             extension.json \
-            Locales/*.json
+            Locales/*.json \
+            web/*.html
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
