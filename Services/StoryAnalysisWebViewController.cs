@@ -44,6 +44,9 @@ public sealed class StoryAnalysisWebViewController : IWebViewController, IDispos
             case "analyseChapter":
                 _vm.AnalyseCurrentChapterCommand.Execute(null);
                 return Task.FromResult<string?>(null);
+            case "analyseAll":
+                _vm.AnalyseAllChaptersCommand.Execute(null);
+                return Task.FromResult<string?>(null);
             case "analyseStory":
                 _vm.AnalyseWholeStoryCommand.Execute(null);
                 return Task.FromResult<string?>(null);
@@ -104,6 +107,7 @@ public sealed class StoryAnalysisWebViewController : IWebViewController, IDispos
             strings = new Dictionary<string, string>
             {
                 ["analyseChapter"] = _vm.Loc.T("ai.analyseChapter"),
+                ["analyseAll"] = _vm.Loc.T("ai.analyseAllChapters"),
                 ["analyseStory"] = _vm.Loc.T("ai.analyseWholeStory"),
                 ["stop"] = _vm.Loc.T("ai.cancelAnalysis"),
                 ["stopping"] = _vm.Loc.T("ai.stopping"),

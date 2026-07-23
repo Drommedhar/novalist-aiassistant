@@ -176,7 +176,8 @@
     "stop": "Stopp",
     "addToCodex": "Zum Codex hinzufügen",
     "addedToCodex": "„{0}“ wurde zum Codex hinzugefügt.",
-    "addToCodexFailed": "„{0}“ konnte nicht zum Codex hinzugefügt werden."
+    "addToCodexFailed": "„{0}“ konnte nicht zum Codex hinzugefügt werden.",
+    "analyseAllChapters": "Alle Kapitel analysieren"
   },
   "wizard": {
     "ai": {

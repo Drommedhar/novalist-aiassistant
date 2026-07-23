@@ -55,6 +55,7 @@ button:disabled { opacity: .5; cursor: default; }
 <div id="toolbar">
   <select id="chapter"></select>
   <button id="runChapter" class="primary" data-i18n="analyseChapter">Analyse chapter</button>
+  <button id="runAll" data-i18n="analyseAll">Analyse all chapters</button>
   <button id="runStory" data-i18n="analyseStory">Analyse whole story</button>
   <button id="cancelRun" data-i18n="stop" hidden>Stop</button>
   <select id="filter"></select>
@@ -89,6 +90,7 @@ const chapterEl = document.getElementById('chapter');
 const filterEl = document.getElementById('filter');
 const runChapterBtn = document.getElementById('runChapter');
 const runStoryBtn = document.getElementById('runStory');
+const runAllBtn = document.getElementById('runAll');
 const progressEl = document.getElementById('progress');
 const cancelBtn = document.getElementById('cancelRun');
 const thinkingWrap = document.getElementById('thinkingWrap');
@@ -137,6 +139,7 @@ window.addEventListener('message', (event) => {
   } else if (msg.type === 'state') {
     runChapterBtn.disabled = msg.isAnalysing;
     runStoryBtn.disabled = msg.isAnalysing;
+    runAllBtn.disabled = msg.isAnalysing;
     cancelBtn.hidden = !msg.isAnalysing;
     if (msg.isAnalysing) cancelBtn.disabled = false;   // re-arm for each new run
     analysing = msg.isAnalysing;
@@ -236,6 +239,7 @@ chapterEl.addEventListener('change', () => post({ type: 'selectChapter', guid: c
 filterEl.addEventListener('change', () => post({ type: 'setFilter', filter: filterEl.value }));
 runChapterBtn.addEventListener('click', () => post({ type: 'analyseChapter' }));
 runStoryBtn.addEventListener('click', () => post({ type: 'analyseStory' }));
+runAllBtn.addEventListener('click', () => post({ type: 'analyseAll' }));
 cancelBtn.addEventListener('click', () => {
   cancelBtn.disabled = true;
   progressEl.textContent = t('stopping','Stopping...');

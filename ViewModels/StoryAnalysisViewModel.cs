@@ -265,11 +265,31 @@ public partial class StoryAnalysisViewModel : ObservableObject, IDisposable
     private async Task AnalyseCurrentChapterAsync()
     {
         if (SelectedChapter == null) return;
-
-        var chapters = _host.ProjectService.GetChaptersOrdered();
-        var chapter = chapters.FirstOrDefault(c => c.Guid == SelectedChapter.Guid);
+        var chapter = _host.ProjectService.GetChaptersOrdered()
+            .FirstOrDefault(c => c.Guid == SelectedChapter.Guid);
         if (chapter == null) return;
+        await AnalyseChaptersAsync([chapter]).ConfigureAwait(false);
+    }
 
+    /// <summary>
+    /// Runs the per-scene analysis over every chapter in the book.
+    ///
+    /// This is distinct from "analyse whole story", which sends the entire text
+    /// as one prompt for a cross-chapter reading and stores nothing. This walks
+    /// the same path as a single chapter, so every scene ends up with a stored
+    /// record that character knowledge and the focus peek can reuse — and scenes
+    /// already analysed cost nothing.
+    /// </summary>
+    [RelayCommand]
+    private async Task AnalyseAllChaptersAsync()
+    {
+        var chapters = _host.ProjectService.GetChaptersOrdered();
+        if (chapters.Count == 0) return;
+        await AnalyseChaptersAsync(chapters).ConfigureAwait(false);
+    }
+
+    private async Task AnalyseChaptersAsync(IReadOnlyList<ChapterInfo> chaptersToAnalyse)
+    {
         IsAnalysing = true;
         AllFindings.Clear();
         FilteredFindings.Clear();
@@ -297,14 +317,18 @@ public partial class StoryAnalysisViewModel : ObservableObject, IDisposable
                 SceneStats = settings.CheckSceneStats,
             };
 
-            // Get text for all scenes in the selected chapter
-            var scenes = _host.ProjectService.GetScenesForChapter(chapter.Guid);
-            var sceneTexts = new List<(Sdk.Services.SceneInfo Scene, string Text)>();
-            foreach (var s in scenes)
+            // Every scene of every chapter in scope, carrying its own chapter so
+            // findings and records are attributed correctly when the run spans
+            // more than one.
+            var sceneTexts = new List<(ChapterInfo Chapter, Sdk.Services.SceneInfo Scene, string Text)>();
+            foreach (var ch in chaptersToAnalyse)
             {
-                var text = await _host.ProjectService.ReadSceneContentAsync(chapter.Guid, s.Id).ConfigureAwait(false);
-                if (!string.IsNullOrWhiteSpace(text))
-                    sceneTexts.Add((s, text));
+                foreach (var s in _host.ProjectService.GetScenesForChapter(ch.Guid))
+                {
+                    var text = await _host.ProjectService.ReadSceneContentAsync(ch.Guid, s.Id).ConfigureAwait(false);
+                    if (!string.IsNullOrWhiteSpace(text))
+                        sceneTexts.Add((ch, s, text));
+                }
             }
 
             _host.PostToUI(() =>
@@ -331,7 +355,7 @@ public partial class StoryAnalysisViewModel : ObservableObject, IDisposable
 
             var sceneTasks = sceneTexts.Select(async pair =>
             {
-                var (s, text) = pair;
+                var (ch, s, text) = pair;
                 await gate.WaitAsync(_cts.Token).ConfigureAwait(false);
                 lock (active) active.Add(s.Title);
                 PublishActive();
@@ -363,7 +387,7 @@ public partial class StoryAnalysisViewModel : ObservableObject, IDisposable
                     // changed one costs a single call that character knowledge then
                     // gets for free.
                     var request = await SceneAnalysisService.BuildRequestAsync(
-                        _host, chapter.Guid, chapter.Title, s.Id, s.Title, text, entities, checks)
+                        _host, ch.Guid, ch.Title, s.Id, s.Title, text, entities, checks)
                         .ConfigureAwait(false);
                     var record = await _sceneAnalysis.GetOrCreateAsync(
                         _host, request, _cts.Token,
@@ -374,7 +398,7 @@ public partial class StoryAnalysisViewModel : ObservableObject, IDisposable
                         _host.PostToUI(FlushStreamingBuffers);
 
                     var items = (record?.Findings ?? [])
-                        .Select(f => new AnalysisFindingItem(ToFinding(f), chapter.Title, s.Title))
+                        .Select(f => new AnalysisFindingItem(ToFinding(f), ch.Title, s.Title))
                         .ToList();
                     _host.PostToUI(() =>
                     {

@@ -59,6 +59,10 @@ public sealed class ClaudeCliClient
         }
     }
 
+    /// <summary>What `-p` carries when the real prompt is on stdin.</summary>
+    private const string StdinDirective =
+        "Respond to the input provided on standard input.";
+
     private Process? _process;
     private readonly object _processLock = new();
 
@@ -113,7 +117,11 @@ public sealed class ClaudeCliClient
         var systemFile = Path.Combine(Path.GetTempPath(), $"nl-claude-{Guid.NewGuid():N}.system.txt");
         var args = new List<string>
         {
-            "-p", userPrompt,
+            // The prompt travels on stdin, not as an argument: a scene plus the
+            // Codex entity list runs to tens of thousands of characters, and
+            // Windows caps a command line at ~32k ("The filename or extension is
+            // too long"). stdin has no such limit.
+            "-p", StdinDirective,
             // Newline-delimited events rather than one blob at the end, so the
             // model's reasoning and answer can be surfaced while it works.
             // --verbose and --include-partial-messages are what make the CLI emit
@@ -142,7 +150,7 @@ public sealed class ClaudeCliClient
             }
 
             (exitCode, stdout, stderr) =
-                await RunStreamingAsync(args, cancellationToken).ConfigureAwait(false);
+                await RunStreamingAsync(args, userPrompt, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -191,7 +199,7 @@ public sealed class ClaudeCliClient
     /// still applies. Each stdout line is one event; the last one is the `result`.
     /// </summary>
     private async Task<(int ExitCode, string StdOut, string StdErr)> RunStreamingAsync(
-        IReadOnlyList<string> args, CancellationToken cancellationToken)
+        IReadOnlyList<string> args, string? stdin, CancellationToken cancellationToken)
     {
         var startInfo = BuildStartInfo(args);
         using var process = new Process { StartInfo = startInfo };
@@ -201,7 +209,17 @@ public sealed class ClaudeCliClient
         try
         {
             var stderrTask = process.StandardError.ReadToEndAsync(cancellationToken);
-            process.StandardInput.Close();
+
+            // Feed stdin on its own task: a scene-sized prompt is far larger than
+            // the pipe buffer, so writing it inline before reading stdout could
+            // deadlock against a child that is already emitting events.
+            var stdinTask = Task.Run(async () =>
+            {
+                if (stdin != null)
+                    await process.StandardInput.WriteAsync(stdin.AsMemory(), cancellationToken)
+                        .ConfigureAwait(false);
+                process.StandardInput.Close();
+            }, cancellationToken);
 
             var resultLine = string.Empty;
             var answer = new StringBuilder();
