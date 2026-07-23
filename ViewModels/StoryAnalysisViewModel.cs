@@ -3,6 +3,7 @@ using System.Text;
 using System.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using Novalist.Extensions.AiAssistant.Services;
 using Novalist.Sdk.Models;
 using Novalist.Sdk.Services;
 
@@ -13,6 +14,7 @@ public partial class StoryAnalysisViewModel : ObservableObject, IDisposable
     private readonly IHostServices _host;
     private readonly AiAssistantExtension _extension;
     private readonly IExtensionLocalization _loc;
+    private readonly SceneAnalysisService _sceneAnalysis;
 
     public IExtensionLocalization Loc => _loc;
 
@@ -27,6 +29,22 @@ public partial class StoryAnalysisViewModel : ObservableObject, IDisposable
 
     [ObservableProperty]
     private int _progressTotal;
+
+    /// <summary>How many scenes of the selected chapter have a stored analysis,
+    /// and how many there are. Lets the view distinguish "analysed, nothing
+    /// found" from "not analysed yet" — which otherwise both look like an empty
+    /// list.</summary>
+    [ObservableProperty]
+    private int _analysedSceneCount;
+
+    [ObservableProperty]
+    private int _chapterSceneCount;
+
+    /// <summary>Scenes being analysed right now, comma-joined. With several
+    /// prompts in flight a single "current scene" is misleading — the completed
+    /// count can sit at zero while four scenes are running.</summary>
+    [ObservableProperty]
+    private string _progressActive = string.Empty;
 
     [ObservableProperty]
     private string _streamingLog = string.Empty;
@@ -69,7 +87,23 @@ public partial class StoryAnalysisViewModel : ObservableObject, IDisposable
         _host = host;
         _extension = extension;
         _loc = host.GetLocalization(extension.Id);
+        _sceneAnalysis = new SceneAnalysisService(extension.AiService, _loc);
     }
+
+    /// <summary>Adapts a stored finding to the shape the list items expect.</summary>
+    private static AiFinding ToFinding(CachedAiFinding f) => new()
+    {
+        Type = f.Type,
+        Title = f.Title,
+        Description = f.Description,
+        Excerpt = f.Excerpt,
+        EntityName = f.EntityName,
+        EntityType = f.EntityType,
+        ScenePov = f.ScenePov,
+        SceneEmotion = f.SceneEmotion,
+        SceneIntensity = f.SceneIntensity,
+        SceneConflict = f.SceneConflict,
+    };
 
     private bool _disposed;
     public void Dispose()
@@ -85,6 +119,136 @@ public partial class StoryAnalysisViewModel : ObservableObject, IDisposable
     {
         SelectedSceneFilter = value != null && AvailableScenes.Contains(value) ? value : null;
         ApplyFilter();
+    }
+
+    /// <summary>Re-filter whenever the type changes, whoever changed it. Setting
+    /// the property alone used to leave the list untouched, so a caller that did
+    /// not go through the command silently did nothing.</summary>
+    partial void OnFilterTypeChanged(string value) => ApplyFilter();
+
+    /// <summary>
+    /// Shows the findings already stored for the selected chapter, without
+    /// running anything. A scene that has been analysed once keeps its record,
+    /// so re-opening the view or switching chapters should present that work
+    /// rather than an empty list and a button.
+    /// </summary>
+    /// <summary>Names already in the Codex, refreshed whenever findings load, so
+    /// the view only offers to create what is genuinely missing.</summary>
+    private HashSet<string> _knownEntityNames = new(StringComparer.CurrentCultureIgnoreCase);
+
+    /// <summary>True when the finding names an entity the Codex does not hold.</summary>
+    public bool CanAddToCodex(AnalysisFindingItem finding)
+        => !string.IsNullOrWhiteSpace(finding.EntityName)
+           && !_knownEntityNames.Contains(finding.EntityName.Trim());
+
+    private async Task RefreshKnownEntityNamesAsync()
+    {
+        var names = new HashSet<string>(StringComparer.CurrentCultureIgnoreCase);
+        foreach (var c in await _host.EntityService.LoadCharactersAsync().ConfigureAwait(false))
+        {
+            names.Add(c.DisplayName);
+            foreach (var alias in c.Aliases) names.Add(alias);
+        }
+        foreach (var l in await _host.EntityService.LoadLocationsAsync().ConfigureAwait(false)) names.Add(l.Name);
+        foreach (var i in await _host.EntityService.LoadItemsAsync().ConfigureAwait(false)) names.Add(i.Name);
+        foreach (var l in await _host.EntityService.LoadLoreAsync().ConfigureAwait(false)) names.Add(l.Name);
+        _knownEntityNames = names;
+    }
+
+    /// <summary>
+    /// Creates the Codex entry a finding points at. Unknown or missing types fall
+    /// back to lore, which is the least wrong home for "something the story has"
+    /// and is trivially moved afterwards.
+    /// </summary>
+    public async Task<bool> AddToCodexAsync(string name, string entityType, string description)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return false;
+
+        var type = (entityType ?? string.Empty).Trim().ToLowerInvariant();
+        if (type is not ("character" or "location" or "item" or "lore"))
+            type = "lore";
+
+        var id = await _host.EntityService
+            .CreateEntityAsync(type, name.Trim(), description ?? string.Empty).ConfigureAwait(false);
+        if (string.IsNullOrEmpty(id)) return false;
+
+        _host.EntityService.RequestEntityRefresh();
+        await RefreshKnownEntityNamesAsync().ConfigureAwait(false);
+        _host.PostToUI(ApplyFilter);   // re-push findings so the button disappears
+        return true;
+    }
+
+    /// <summary>Recounts how much of the selected chapter has a stored analysis,
+    /// without touching the findings list.</summary>
+    private async Task RefreshAnalysedCountAsync()
+    {
+        if (SelectedChapter == null) return;
+        var scenes = _host.ProjectService.GetScenesForChapter(SelectedChapter.Guid);
+        var analysed = 0;
+        foreach (var scene in scenes)
+        {
+            if (await _host.GetSceneAnalysisAsync(scene.Id).ConfigureAwait(false) != null)
+                analysed++;
+        }
+        _host.PostToUI(() =>
+        {
+            AnalysedSceneCount = analysed;
+            ChapterSceneCount = scenes.Count;
+        });
+    }
+
+    public async Task LoadStoredFindingsAsync()
+    {
+        // Before the early returns: findings can be pushed to the view at any
+        // time (a live run, a filter change), and each push asks whether the
+        // Codex already holds the named entity. An empty set would mark every
+        // finding as new and offer to create things that already exist.
+        await RefreshKnownEntityNamesAsync().ConfigureAwait(false);
+
+        if (SelectedChapter == null || IsAnalysing) return;
+
+        var chapter = _host.ProjectService.GetChaptersOrdered()
+            .FirstOrDefault(c => c.Guid == SelectedChapter.Guid);
+        if (chapter == null) return;
+
+        var loaded = new List<AnalysisFindingItem>();
+        var sceneNames = new List<string>();
+        var scenes = _host.ProjectService.GetScenesForChapter(chapter.Guid);
+        var analysed = 0;
+        foreach (var scene in scenes)
+        {
+            var record = await _host.GetSceneAnalysisAsync(scene.Id).ConfigureAwait(false);
+            if (record == null) continue;
+            analysed++;
+            sceneNames.Add(scene.Title);
+            loaded.AddRange(record.Findings
+                .Select(f => new AnalysisFindingItem(ToFinding(f), chapter.Title, scene.Title)));
+        }
+
+        _host.PostToUI(() =>
+        {
+            AnalysedSceneCount = analysed;
+            ChapterSceneCount = scenes.Count;
+            AllFindings.Clear();
+            foreach (var item in loaded) AllFindings.Add(item);
+
+            AvailableScenes.Clear();
+            SceneFilterOptions.Clear();
+            SceneFilterOptions.Add(_loc.T("ai.allScenes"));
+            foreach (var name in sceneNames.Distinct())
+            {
+                AvailableScenes.Add(name);
+                SceneFilterOptions.Add(name);
+            }
+            HasMultipleScenes = AvailableScenes.Count > 1;
+            SelectedSceneOption = SceneFilterOptions[0];
+
+            ApplyFilter();
+            HasResults = AllFindings.Count > 0;
+            ProgressText = AllFindings.Count > 0
+                ? _loc.T("ai.analysisComplete", AllFindings.Count)
+                : string.Empty;
+        });
     }
 
     public void RefreshChapters()
@@ -149,16 +313,28 @@ public partial class StoryAnalysisViewModel : ObservableObject, IDisposable
                 ProgressCurrent = 0;
             });
 
-            var parallelism = _extension.AiService.IsCopilotProvider
+            var parallelism = _extension.AiService.IsSerialProvider
                 ? 1
                 : Math.Max(1, _extension.Settings.MaxParallelPrompts);
             var useStreaming = parallelism == 1;
             var gate = new SemaphoreSlim(parallelism, parallelism);
 
+            // Scene titles currently in flight, so the UI can report what is really
+            // happening rather than whichever scene happened to start last.
+            var active = new List<string>();
+            void PublishActive()
+            {
+                string joined;
+                lock (active) joined = string.Join(", ", active);
+                _host.PostToUI(() => ProgressActive = joined);
+            }
+
             var sceneTasks = sceneTexts.Select(async pair =>
             {
                 var (s, text) = pair;
                 await gate.WaitAsync(_cts.Token).ConfigureAwait(false);
+                lock (active) active.Add(s.Title);
+                PublishActive();
                 try
                 {
                     _cts.Token.ThrowIfCancellationRequested();
@@ -183,26 +359,22 @@ public partial class StoryAnalysisViewModel : ObservableObject, IDisposable
                             ProgressText = _loc.T("ai.analysingScene", s.Title));
                     }
 
-                    var context = new ChapterContext
-                    {
-                        ChapterName = chapter.Title,
-                        SceneName = s.Title,
-                        Date = chapter.Date,
-                    };
-
-                    var result = await _extension.AiService.AnalyseChapterWholeAsync(
-                        text, entities,
-                        null, context, checks,
+                    // One shared door: an unchanged scene is reused verbatim, and a
+                    // changed one costs a single call that character knowledge then
+                    // gets for free.
+                    var request = await SceneAnalysisService.BuildRequestAsync(
+                        _host, chapter.Guid, chapter.Title, s.Id, s.Title, text, entities, checks)
+                        .ConfigureAwait(false);
+                    var record = await _sceneAnalysis.GetOrCreateAsync(
+                        _host, request, _cts.Token,
                         useStreaming ? OnStreamingChunk : null,
-                        useStreaming ? OnThinkingChunk : null,
-                        settings.DisableRegexReferences,
-                        _cts.Token).ConfigureAwait(false);
+                        useStreaming ? OnThinkingChunk : null).ConfigureAwait(false);
 
                     if (useStreaming)
                         _host.PostToUI(FlushStreamingBuffers);
 
-                    var items = result.Findings
-                        .Select(f => new AnalysisFindingItem(f, chapter.Title, s.Title))
+                    var items = (record?.Findings ?? [])
+                        .Select(f => new AnalysisFindingItem(ToFinding(f), chapter.Title, s.Title))
                         .ToList();
                     _host.PostToUI(() =>
                     {
@@ -212,6 +384,8 @@ public partial class StoryAnalysisViewModel : ObservableObject, IDisposable
                 }
                 finally
                 {
+                    lock (active) active.Remove(s.Title);
+                    PublishActive();
                     gate.Release();
                 }
             }).ToList();
@@ -246,8 +420,19 @@ public partial class StoryAnalysisViewModel : ObservableObject, IDisposable
         }
         finally
         {
-            _host.PostToUI(() => IsAnalysing = false);
+            _host.PostToUI(() =>
+            {
+                IsAnalysing = false;
+                ProgressActive = string.Empty;
+            });
             _cts = null;
+            // Recount from disk: a cancelled run leaves scenes unanalysed, and
+            // the view must say so rather than imply the chapter is complete.
+            await RefreshAnalysedCountAsync().ConfigureAwait(false);
+            // Refresh what the Codex holds, then re-push so the "Add to Codex"
+            // buttons reflect reality for findings produced during the run.
+            await RefreshKnownEntityNamesAsync().ConfigureAwait(false);
+            _host.PostToUI(ApplyFilter);
         }
     }
 
@@ -328,8 +513,19 @@ public partial class StoryAnalysisViewModel : ObservableObject, IDisposable
         }
         finally
         {
-            _host.PostToUI(() => IsAnalysing = false);
+            _host.PostToUI(() =>
+            {
+                IsAnalysing = false;
+                ProgressActive = string.Empty;
+            });
             _cts = null;
+            // Recount from disk: a cancelled run leaves scenes unanalysed, and
+            // the view must say so rather than imply the chapter is complete.
+            await RefreshAnalysedCountAsync().ConfigureAwait(false);
+            // Refresh what the Codex holds, then re-push so the "Add to Codex"
+            // buttons reflect reality for findings produced during the run.
+            await RefreshKnownEntityNamesAsync().ConfigureAwait(false);
+            _host.PostToUI(ApplyFilter);
         }
     }
 

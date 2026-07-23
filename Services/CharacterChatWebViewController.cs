@@ -14,6 +14,7 @@ public sealed class CharacterChatWebViewController : IWebViewController, IDispos
         new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
     private readonly CharacterChatViewModel _vm;
+    private readonly IExtensionLocalization _loc;
 
     public event Action<string>? MessagePosted;
 
@@ -23,6 +24,7 @@ public sealed class CharacterChatWebViewController : IWebViewController, IDispos
         Func<CharacterKnowledgeService?> knowledgeAccessor)
     {
         _vm = new CharacterChatViewModel(host, extension, knowledgeAccessor);
+        _loc = host.GetLocalization(extension.Id);
         _vm.PropertyChanged += OnVmPropertyChanged;
         _vm.Turns.CollectionChanged += OnTurnsChanged;
     }
@@ -69,7 +71,16 @@ public sealed class CharacterChatWebViewController : IWebViewController, IDispos
             selectedSceneId = _vm.SelectedScene?.Id,
             turns = _vm.Turns
                 .Select(t => new { speaker = t.SpeakerName, text = t.Content, isCharacter = t.IsCharacter })
-                .ToArray()
+                .ToArray(),
+            // Labels come from the host so the panel follows the project language
+            // instead of being hardcoded English.
+            strings = new Dictionary<string, string>
+            {
+                ["send"] = _loc.T("characterChat.send"),
+                ["stop"] = _loc.T("characterChat.stop"),
+                ["reset"] = _loc.T("characterChat.reset"),
+                ["placeholder"] = _loc.T("characterChat.inputWatermark"),
+            }
         }, Json);
 
     private void OnVmPropertyChanged(object? sender, PropertyChangedEventArgs e)

@@ -226,7 +226,7 @@ public partial class AiChatViewModel : ObservableObject, IDisposable
             {
                 var details = new StringBuilder();
                 if (!string.IsNullOrEmpty(c.Role)) details.Append($"Role: {c.Role}. ");
-                summaries.Add(new EntitySummary { Name = c.DisplayName, Type = "character", Details = details.ToString().TrimEnd() });
+                summaries.Add(new EntitySummary { Id = c.Id, Name = c.DisplayName, Type = "character", Details = details.ToString().TrimEnd() });
             }
 
             var locations = await _host.EntityService.LoadLocationsAsync();
@@ -234,7 +234,7 @@ public partial class AiChatViewModel : ObservableObject, IDisposable
             {
                 var details = new StringBuilder();
                 if (!string.IsNullOrEmpty(l.Type)) details.Append($"Type: {l.Type}. ");
-                summaries.Add(new EntitySummary { Name = l.Name, Type = "location", Details = details.ToString().TrimEnd() });
+                summaries.Add(new EntitySummary { Id = l.Id, Name = l.Name, Type = "location", Details = details.ToString().TrimEnd() });
             }
 
             var items = await _host.EntityService.LoadItemsAsync();
@@ -242,7 +242,7 @@ public partial class AiChatViewModel : ObservableObject, IDisposable
             {
                 var details = new StringBuilder();
                 if (!string.IsNullOrEmpty(it.Type)) details.Append($"Type: {it.Type}. ");
-                summaries.Add(new EntitySummary { Name = it.Name, Type = "item", Details = details.ToString().TrimEnd() });
+                summaries.Add(new EntitySummary { Id = it.Id, Name = it.Name, Type = "item", Details = details.ToString().TrimEnd() });
             }
 
             var lore = await _host.EntityService.LoadLoreAsync();
@@ -250,7 +250,7 @@ public partial class AiChatViewModel : ObservableObject, IDisposable
             {
                 var details = new StringBuilder();
                 if (!string.IsNullOrEmpty(lr.Category)) details.Append($"Category: {lr.Category}. ");
-                summaries.Add(new EntitySummary { Name = lr.Name, Type = "lore", Details = details.ToString().TrimEnd() });
+                summaries.Add(new EntitySummary { Id = lr.Id, Name = lr.Name, Type = "lore", Details = details.ToString().TrimEnd() });
             }
 
             // Collect custom entity types and their entities
@@ -265,7 +265,7 @@ public partial class AiChatViewModel : ObservableObject, IDisposable
                         var ceDetails = new StringBuilder();
                         foreach (var field in ce.Fields.Take(3))
                             ceDetails.Append($"{field.Key}: {field.Value}. ");
-                        summaries.Add(new EntitySummary { Name = ce.Name, Type = $"custom:{ct.DisplayName}", Details = ceDetails.ToString().TrimEnd() });
+                        summaries.Add(new EntitySummary { Id = ce.Id, Name = ce.Name, Type = $"custom:{ct.DisplayName}", Details = ceDetails.ToString().TrimEnd() });
                     }
                 }
                 catch { /* skip inaccessible custom type */ }

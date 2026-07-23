@@ -24,14 +24,21 @@
       <ExtensionDeployDir>$(APPDATA)\Novalist\Extensions\AiAssistant</ExtensionDeployDir>
     </PropertyGroup>
     <MakeDir Directories="$(ExtensionDeployDir)\Locales" />
+    <MakeDir Directories="$(ExtensionDeployDir)\web" />
     <Copy SourceFiles="$(OutputPath)Novalist.Extensions.AiAssistant.dll;$(OutputPath)extension.json"
           DestinationFolder="$(ExtensionDeployDir)"
           SkipUnchangedFiles="true" />
     <ItemGroup>
       <_LocaleFiles Include="$(OutputPath)Locales\*.*" />
+      <_WebFiles Include="$(OutputPath)web\*.*" />
     </ItemGroup>
     <Copy SourceFiles="@(_LocaleFiles)"
           DestinationFolder="$(ExtensionDeployDir)\Locales"
+          SkipUnchangedFiles="true" />
+    <!-- The webview views (chat, character chat, story analysis) are served from
+         here; without this copy they 404 at novalist-ext://.../web/*.html. -->
+    <Copy SourceFiles="@(_WebFiles)"
+          DestinationFolder="$(ExtensionDeployDir)\web"
           SkipUnchangedFiles="true" />
   </Target>
 

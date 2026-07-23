@@ -24,6 +24,18 @@ button { cursor: pointer; }
 button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
 button:disabled { opacity: .5; cursor: default; }
 #progress { font-size: 12px; color: var(--subtle); padding: 4px 12px; }
+#thinkingWrap { padding: 0 12px 6px; }
+#thinkingWrap[hidden] { display: none; }
+#thinkingWrap summary {
+  cursor: pointer; font-size: 11px; text-transform: uppercase;
+  letter-spacing: .06em; color: var(--subtle); user-select: none;
+}
+#thinking {
+  margin-top: 6px; max-height: 160px; overflow-y: auto;
+  background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+  padding: 8px 10px; font-size: 12px; color: var(--dim);
+  white-space: pre-wrap; word-break: break-word;
+}
 #findings { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
 .finding { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; }
 .finding .kind { font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: var(--warn); }
@@ -31,29 +43,64 @@ button:disabled { opacity: .5; cursor: default; }
 .finding .meta { font-size: 11px; color: var(--subtle); }
 .finding .excerpt { font-size: 12px; color: var(--dim); border-left: 2px solid var(--border); padding-left: 8px; margin-top: 6px; white-space: pre-wrap; }
 .empty { color: var(--subtle); padding: 16px; }
+.finding .addCodex {
+  margin-top: 8px; font-size: 12px; padding: 4px 10px;
+  background: var(--card); border: 1px solid var(--accent); color: var(--text);
+  border-radius: 8px; cursor: pointer;
+}
+.finding .addCodex:disabled { opacity: .5; cursor: default; border-color: var(--border); }
 </style>
 </head>
 <body>
 <div id="toolbar">
   <select id="chapter"></select>
-  <button id="runChapter" class="primary">Analyse chapter</button>
-  <button id="runStory">Analyse whole story</button>
-  <select id="filter">
-    <option value="all">All findings</option>
-    <option value="continuity">Continuity</option>
-    <option value="pacing">Pacing</option>
-    <option value="character">Character</option>
-    <option value="style">Style</option>
-  </select>
+  <button id="runChapter" class="primary" data-i18n="analyseChapter">Analyse chapter</button>
+  <button id="runStory" data-i18n="analyseStory">Analyse whole story</button>
+  <button id="cancelRun" data-i18n="stop" hidden>Stop</button>
+  <select id="filter"></select>
 </div>
 <div id="progress"></div>
-<div id="findings"><div class="empty">Run an analysis to see findings.</div></div>
+<details id="thinkingWrap" hidden open>
+  <summary id="thinkingLabel">Model thinking</summary>
+  <div id="thinking"></div>
+</details>
+<div id="findings"><div class="empty" data-i18n="runToSeeFindings">Run an analysis to see findings.</div></div>
 <script>
+// Localisation: every label comes from the host, so the view holds no English
+// of its own and follows the project language.
+let S = {};
+function t(key, fallback) { return S[key] || fallback || ''; }
+function tf(key, fallback, ...args) {
+  return t(key, fallback).replace(/\{(\d+)\}/g, (m, i) => args[Number(i)] ?? m);
+}
+function applyStrings(map) {
+  if (!map) return;
+  S = map;
+  for (const el of document.querySelectorAll('[data-i18n]')) {
+    const v = S[el.getAttribute('data-i18n')];
+    if (v) el.textContent = v;
+  }
+  for (const el of document.querySelectorAll('[data-i18n-ph]')) {
+    const v = S[el.getAttribute('data-i18n-ph')];
+    if (v) el.setAttribute('placeholder', v);
+  }
+}
 const chapterEl = document.getElementById('chapter');
 const filterEl = document.getElementById('filter');
 const runChapterBtn = document.getElementById('runChapter');
 const runStoryBtn = document.getElementById('runStory');
 const progressEl = document.getElementById('progress');
+const cancelBtn = document.getElementById('cancelRun');
+const thinkingWrap = document.getElementById('thinkingWrap');
+const thinkingEl = document.getElementById('thinking');
+const thinkingLabel = document.getElementById('thinkingLabel');
+// Suppresses the "No findings." empty state while a run is still in flight,
+// where it reads as a result rather than as "nothing yet".
+let analysing = false;
+// Coverage of the selected chapter, so an unanalysed chapter never reads as
+// "checked and clean".
+let analysedScenes = 0;
+let chapterScenes = 0;
 const findingsEl = document.getElementById('findings');
 
 function post(msg) {
@@ -65,6 +112,7 @@ window.addEventListener('message', (event) => {
   if (typeof raw !== 'string') return;
   const msg = JSON.parse(raw);
   if (msg.type === 'setup') {
+    applyStrings(msg.strings);
     chapterEl.textContent = '';
     for (const c of msg.chapters) {
       const option = document.createElement('option');
@@ -73,18 +121,66 @@ window.addEventListener('message', (event) => {
       if (c.guid === msg.selectedChapterGuid) option.selected = true;
       chapterEl.appendChild(option);
     }
+    // Filter options come from the host so they always match the finding types
+    // the analysis actually emits, and are localised.
+    if (msg.filters) {
+      const current = filterEl.value;
+      filterEl.textContent = '';
+      for (const f of msg.filters) {
+        const option = document.createElement('option');
+        option.value = f.value;
+        option.textContent = f.label;
+        if (f.value === current) option.selected = true;
+        filterEl.appendChild(option);
+      }
+    }
   } else if (msg.type === 'state') {
     runChapterBtn.disabled = msg.isAnalysing;
     runStoryBtn.disabled = msg.isAnalysing;
-    progressEl.textContent = msg.isAnalysing
-      ? `${msg.progressText} (${msg.progressCurrent}/${msg.progressTotal})`
-      : '';
+    cancelBtn.hidden = !msg.isAnalysing;
+    if (msg.isAnalysing) cancelBtn.disabled = false;   // re-arm for each new run
+    analysing = msg.isAnalysing;
+    analysedScenes = msg.analysedSceneCount ?? analysedScenes;
+    chapterScenes = msg.chapterSceneCount ?? chapterScenes;
+    if (msg.isAnalysing) {
+      // Report completed-of-total plus what is actually in flight; several
+      // scenes run at once, so naming a single "current" scene would mislead.
+      const done = `${msg.progressCurrent}/${msg.progressTotal}`;
+      progressEl.textContent = msg.progressActive
+        ? `${done} - ${t('running','running')}: ${msg.progressActive}`
+        : `${done} - ${msg.progressText}`;
+    } else {
+      progressEl.textContent = msg.progressText || '';
+    }
+    // Show whichever live text the provider actually produces: reasoning when it
+    // exposes any (local models do), otherwise the answer as it is generated.
+    // The Claude Code CLI omits reasoning text, so there its deltas are empty.
+    const thinking = msg.streamingThinking || '';
+    const log = msg.streamingLog || '';
+    const live = thinking.length > 0 ? thinking : log;
+    thinkingLabel.textContent = thinking.length > 0
+      ? t('modelThinking', 'Model thinking') : t('modelOutput', 'Model output');
+    thinkingWrap.hidden = live.length === 0;
+    if (live !== thinkingEl.textContent) {
+      const atBottom =
+        thinkingEl.scrollHeight - thinkingEl.scrollTop - thinkingEl.clientHeight < 24;
+      thinkingEl.textContent = live;
+      if (atBottom) thinkingEl.scrollTop = thinkingEl.scrollHeight;
+    }
+  } else if (msg.type === 'codexResult') {
+    progressEl.textContent = msg.message || '';
   } else if (msg.type === 'findings') {
     findingsEl.textContent = '';
     if (msg.findings.length === 0) {
       const empty = document.createElement('div');
       empty.className = 'empty';
-      empty.textContent = 'No findings.';
+      if (analysing) {
+        empty.textContent = t('analysing', 'Analysing...');
+      } else if (chapterScenes > 0 && analysedScenes === 0) {
+        empty.textContent = t('notAnalysed', 'This chapter has not been analysed yet.');
+      } else {
+        empty.textContent = t('noFindings', 'No findings.');
+      }
       findingsEl.appendChild(empty);
       return;
     }
@@ -102,6 +198,23 @@ window.addEventListener('message', (event) => {
       meta.className = 'meta';
       meta.textContent = f.chapter;
       el.append(kind, title, meta);
+      // A finding that names something the Codex lacks is actionable: offer to
+      // create it here rather than making the writer retype it in the Codex.
+      if (f.canAddToCodex && f.entityName) {
+        const add = document.createElement('button');
+        add.className = 'addCodex';
+        add.textContent = `${t('addToCodex', 'Add to Codex')}: ${f.entityName}`;
+        add.addEventListener('click', () => {
+          add.disabled = true;
+          post({
+            type: 'addToCodex',
+            name: f.entityName,
+            entityType: f.entityType || '',
+            description: f.description || '',
+          });
+        });
+        el.appendChild(add);
+      }
       if (f.excerpt) {
         const excerpt = document.createElement('div');
         excerpt.className = 'excerpt';
@@ -123,6 +236,11 @@ chapterEl.addEventListener('change', () => post({ type: 'selectChapter', guid: c
 filterEl.addEventListener('change', () => post({ type: 'setFilter', filter: filterEl.value }));
 runChapterBtn.addEventListener('click', () => post({ type: 'analyseChapter' }));
 runStoryBtn.addEventListener('click', () => post({ type: 'analyseStory' }));
+cancelBtn.addEventListener('click', () => {
+  cancelBtn.disabled = true;
+  progressEl.textContent = t('stopping','Stopping...');
+  post({ type: 'cancel' });
+});
 
 post({ type: 'hydrate' });
 </script>

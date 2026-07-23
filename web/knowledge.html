@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Character Knowledge</title>
+<style>
+:root {
+  --bg: #1e1e1e; --card: #252526; --border: #333; --text: #e6edf3;
+  --dim: #b9bac5; --subtle: #848b91; --accent: #0e8bdf; --warn: #f5a623;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  display: flex; flex-direction: column;
+  font: 13px/1.5 system-ui, sans-serif;
+  background: var(--bg); color: var(--text);
+}
+#toolbar {
+  display: flex; gap: 8px; padding: 10px; align-items: center; flex-wrap: wrap;
+  border-bottom: 1px solid var(--border);
+}
+button {
+  font: inherit; color: var(--text); background: var(--card);
+  border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px;
+  cursor: pointer;
+}
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button:disabled { opacity: .5; cursor: default; }
+#progress { font-size: 12px; color: var(--subtle); margin-left: auto; }
+#body { flex: 1; display: flex; min-height: 0; }
+#people {
+  width: 230px; flex-shrink: 0; overflow-y: auto;
+  border-right: 1px solid var(--border); padding: 8px;
+}
+.person {
+  padding: 8px 10px; border-radius: 8px; cursor: pointer;
+  border: 1px solid transparent;
+}
+.person:hover { background: var(--card); }
+.person.active { background: var(--card); border-color: var(--accent); }
+.person .nm { font-weight: 600; }
+.person .cnt { font-size: 11px; color: var(--subtle); }
+#detail { flex: 1; overflow-y: auto; padding: 12px; }
+.scene {
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: 10px; padding: 10px 12px; margin-bottom: 10px;
+}
+.scene > summary { cursor: pointer; user-select: none; }
+.scene .st { font-weight: 600; }
+.scene .ch { font-size: 11px; color: var(--subtle); }
+.scene .absent { color: var(--warn); font-size: 11px; }
+.field { margin-top: 8px; }
+.field .lbl {
+  font-size: 10px; text-transform: uppercase; letter-spacing: .06em;
+  color: var(--subtle);
+}
+.field ul { margin: 2px 0 0; padding-left: 18px; color: var(--dim); }
+.meta { font-size: 11px; color: var(--subtle); margin-top: 8px; }
+.empty { color: var(--subtle); padding: 16px; }
+</style>
+</head>
+<body>
+<div id="toolbar">
+  <button id="scan" class="primary" data-i18n="scan">Scan scenes</button>
+  <button id="cancel" data-i18n="stop" hidden>Stop</button>
+  <span id="progress"></span>
+</div>
+<div id="body">
+  <div id="people"><div class="empty" data-i18n="loading">Loading...</div></div>
+  <div id="detail"><div class="empty" data-i18n="selectCharacter">Select a character.</div></div>
+</div>
+<script>
+// Localisation: every label comes from the host, so the view holds no English
+// of its own and follows the project language.
+let S = {};
+function t(key, fallback) { return S[key] || fallback || ''; }
+function tf(key, fallback, ...args) {
+  return t(key, fallback).replace(/\{(\d+)\}/g, (m, i) => args[Number(i)] ?? m);
+}
+function applyStrings(map) {
+  if (!map) return;
+  S = map;
+  for (const el of document.querySelectorAll('[data-i18n]')) {
+    const v = S[el.getAttribute('data-i18n')];
+    if (v) el.textContent = v;
+  }
+  for (const el of document.querySelectorAll('[data-i18n-ph]')) {
+    const v = S[el.getAttribute('data-i18n-ph')];
+    if (v) el.setAttribute('placeholder', v);
+  }
+}
+const peopleEl = document.getElementById('people');
+const detailEl = document.getElementById('detail');
+const progressEl = document.getElementById('progress');
+const scanBtn = document.getElementById('scan');
+const cancelBtn = document.getElementById('cancel');
+let selectedId = null;
+
+function post(msg) {
+  parent.postMessage({ novalistExt: JSON.stringify(msg) }, '*');
+}
+
+function renderCharacters(list) {
+  peopleEl.textContent = '';
+  if (!list.length) {
+    const e = document.createElement('div');
+    e.className = 'empty';
+    e.textContent = t('noCharacters','No characters in this project.');
+    peopleEl.appendChild(e);
+    return;
+  }
+  for (const c of list) {
+    const row = document.createElement('div');
+    row.className = 'person' + (c.id === selectedId ? ' active' : '');
+    const nm = document.createElement('div');
+    nm.className = 'nm';
+    nm.textContent = c.name;
+    const cnt = document.createElement('div');
+    cnt.className = 'cnt';
+    // Distinguish "not scanned" from "scanned, not in any scene" — very
+    // different situations that both otherwise look like zero.
+    cnt.textContent = c.scenesRecorded === 0
+      ? t('notScanned', 'not analysed yet')
+      : tf('presentIn', 'present in {0} of {1} analysed scene(s)', c.scenesKnown, c.scenesRecorded);
+    row.append(nm, cnt);
+    row.addEventListener('click', () => {
+      selectedId = c.id;
+      for (const el of peopleEl.children) el.classList.remove('active');
+      row.classList.add('active');
+      detailEl.textContent = '';
+      const loading = document.createElement('div');
+      loading.className = 'empty';
+      loading.textContent = t('loading','Loading...');
+      detailEl.appendChild(loading);
+      post({ type: 'selectCharacter', characterId: c.id });
+    });
+    peopleEl.appendChild(row);
+  }
+}
+
+function renderScenes(scenes) {
+  detailEl.textContent = '';
+  if (!scenes.length) {
+    const e = document.createElement('div');
+    e.className = 'empty';
+    e.textContent = t('noData','No knowledge recorded yet.');
+    detailEl.appendChild(e);
+    return;
+  }
+  for (const s of scenes) {
+    const box = document.createElement('details');
+    box.className = 'scene';
+    box.open = s.present;
+
+    const sum = document.createElement('summary');
+    const st = document.createElement('span');
+    st.className = 'st';
+    st.textContent = s.sceneTitle || t('untitledScene','(untitled scene)');
+    sum.appendChild(st);
+    if (s.chapterTitle) {
+      const ch = document.createElement('div');
+      ch.className = 'ch';
+      ch.textContent = s.chapterTitle;
+      sum.appendChild(ch);
+    }
+    if (!s.present) {
+      const ab = document.createElement('div');
+      ab.className = 'absent';
+      ab.textContent = t('notPresent','not present in this scene');
+      sum.appendChild(ab);
+    }
+    box.appendChild(sum);
+
+    for (const f of s.fields) {
+      const wrap = document.createElement('div');
+      wrap.className = 'field';
+      const lbl = document.createElement('div');
+      lbl.className = 'lbl';
+      lbl.textContent = f.label;
+      const ul = document.createElement('ul');
+      for (const v of f.values) {
+        const li = document.createElement('li');
+        li.textContent = v;
+        ul.appendChild(li);
+      }
+      wrap.append(lbl, ul);
+      box.appendChild(wrap);
+    }
+
+    if (s.present && s.modelId) {
+      const meta = document.createElement('div');
+      meta.className = 'meta';
+      meta.textContent = tf('model','model: {0}', s.modelId);
+      box.appendChild(meta);
+    }
+    detailEl.appendChild(box);
+  }
+}
+
+window.addEventListener('message', (event) => {
+  const raw = event.data && event.data.novalistHost;
+  if (typeof raw !== 'string') return;
+  const msg = JSON.parse(raw);
+  if (msg.type === 'characters') {
+    applyStrings(msg.strings);
+    renderCharacters(msg.characters);
+  } else if (msg.type === 'scenes') {
+    renderScenes(msg.scenes);
+  } else if (msg.type === 'scanProgress') {
+    scanBtn.disabled = msg.running;
+    cancelBtn.hidden = !msg.running;
+    if (msg.running) {
+      cancelBtn.disabled = false;
+      const where = msg.sceneTitle ? ` - ${msg.sceneTitle}` : '';
+      progressEl.textContent = `${msg.done}/${msg.total}${where}`;
+    } else {
+      progressEl.textContent = '';
+    }
+  } else if (msg.type === 'scanError') {
+    progressEl.textContent = tf('error','Error: {0}', msg.message);
+    scanBtn.disabled = false;
+    cancelBtn.hidden = true;
+  }
+});
+
+scanBtn.addEventListener('click', () => {
+  progressEl.textContent = t('starting','Starting...');
+  scanBtn.disabled = true;
+  post({ type: 'scan' });
+});
+cancelBtn.addEventListener('click', () => {
+  cancelBtn.disabled = true;
+  progressEl.textContent = t('stopping','Stopping...');
+  post({ type: 'cancelScan' });
+});
+
+post({ type: 'hydrate' });
+</script>
+</body>
+</html>

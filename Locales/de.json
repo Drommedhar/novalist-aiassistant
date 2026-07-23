@@ -6,7 +6,9 @@
     "storyAnalysisTooltip": "KI-Geschichtsanalyse starten",
     "characterChat": "Als Figur sprechen",
     "characterChatTooltip": "Rollenspiel als Figur mit szenenbewusstem Wissen",
-    "aiGroup": "KI"
+    "aiGroup": "KI",
+    "knowledge": "Wissen",
+    "knowledgeTooltip": "Anzeigen, was jede Figur szenenweise weiß"
   },
   "settings": {
     "ai": "KI / LLM",
@@ -25,6 +27,8 @@
     "aiCopilotPathPlaceholder": "copilot",
     "aiCopilotModel": "Modell",
     "aiCopilotModelPlaceholder": "z.B. gpt-4o (leer = Standard)",
+    "aiClaudePath": "Claude CLI-Pfad",
+    "aiClaudeModel": "Modell",
     "aiTestConnection": "Verbindung testen",
     "aiTesting": "Teste...",
     "aiConnected": "✓ Verbunden",
@@ -70,7 +74,9 @@
     "knowledgeScanCancelled": "Scan abgebrochen.",
     "knowledgeScanComplete": "Scan abgeschlossen.",
     "knowledgeCancel": "Abbrechen",
-    "knowledgeClose": "Schließen"
+    "knowledgeClose": "Schließen",
+    "backgroundAnalysis": "Szenen im Hintergrund analysieren",
+    "backgroundAnalysisDesc": "Nach dem Speichern einer Szene wird sie still analysiert, damit die Ergebnisse bereitstehen, bevor eine Funktion sie braucht. Standardmäßig aus, da das Modell ohne dein Zutun genutzt wird."
   },
   "characterChat": {
     "character": "Figur",
@@ -85,13 +91,15 @@
     "reset": "Chat zurücksetzen",
     "noSceneContext": "(kein Szenenkontext)",
     "userLabel": "Du",
-    "errorLabel": "Fehler"
+    "errorLabel": "Fehler",
+    "title": "Figuren-Chat"
   },
   "toast": {
     "knowledgeClearSuccess": "Wissens-Cache geleert.",
     "knowledgeClearFailed": "Wissens-Cache konnte nicht geleert werden.",
     "knowledgeClearFailedReason": "Wissens-Cache leeren fehlgeschlagen: {0}",
-    "setupComplete": "KI-Assistent konfiguriert."
+    "setupComplete": "KI-Assistent konfiguriert.",
+    "knowledgeCleared": "Bisheriges Figurenwissen gelöscht. Führe den Wissens-Scan aus, um es neu aufzubauen."
   },
   "inline": {
     "rewrite": "Umschreiben",
@@ -155,7 +163,20 @@
     "stat.pov": "POV:",
     "stat.emotion": "Emotion:",
     "stat.intensity": "Intensität:",
-    "stat.conflict": "Konflikt:"
+    "stat.conflict": "Konflikt:",
+    "modelThinking": "Modell denkt",
+    "modelOutput": "Modellausgabe",
+    "analysing": "Analysiere...",
+    "noFindings": "Keine Befunde.",
+    "notAnalysed": "Dieses Kapitel wurde noch nicht analysiert.",
+    "partiallyAnalysed": "{0} von {1} Szenen analysiert.",
+    "runToSeeFindings": "Starte eine Analyse, um Befunde zu sehen.",
+    "stopping": "Wird gestoppt...",
+    "running": "läuft",
+    "stop": "Stopp",
+    "addToCodex": "Zum Codex hinzufügen",
+    "addedToCodex": "„{0}“ wurde zum Codex hinzugefügt.",
+    "addToCodexFailed": "„{0}“ konnte nicht zum Codex hinzugefügt werden."
   },
   "wizard": {
     "ai": {
@@ -204,5 +225,45 @@
         "placeholder": "Deutsch"
       }
     }
+  },
+  "extract": {
+    "noModel": "KI-Modell ist nicht verfügbar.",
+    "failedReason": "Extraktion fehlgeschlagen: {0}"
+  },
+  "status": {
+    "analysingScene": "Analysiere: {0}",
+    "scenesAnalysed": "{0} Szene(n) analysiert",
+    "backgroundTooltip": "Hintergrund-Szenenanalyse (KI-Assistent)"
+  },
+  "knowledge": {
+    "field": {
+      "observed": "Beobachtet",
+      "learned": "Erfahren",
+      "said": "Gesagt",
+      "uncertain": "Unsicher",
+      "emotion": "Emotion",
+      "location": "Ort",
+      "companions": "Begleiter",
+      "physicalState": "Körperlicher Zustand",
+      "goals": "Ziele",
+      "relationshipChanges": "Beziehungsänderungen",
+      "secrets": "Geheimnisse",
+      "voiceNotes": "Sprechweise",
+      "inventoryChanges": "Gegenstände"
+    },
+    "scan": "Szenen analysieren",
+    "stop": "Stopp",
+    "loading": "Lädt...",
+    "selectCharacter": "Wähle eine Figur.",
+    "noCharacters": "Keine Figuren in diesem Projekt.",
+    "notScanned": "noch nicht analysiert",
+    "presentIn": "anwesend in {0} von {1} analysierten Szene(n)",
+    "noData": "Noch kein Wissen erfasst. Analysiere die Szenen, um es aufzubauen.",
+    "notPresent": "in dieser Szene nicht anwesend",
+    "untitledScene": "(unbenannte Szene)",
+    "model": "Modell: {0}",
+    "starting": "Startet...",
+    "stopping": "Wird gestoppt...",
+    "error": "Fehler: {0}"
   }
 }

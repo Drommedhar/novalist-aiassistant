@@ -10,6 +10,7 @@ using System.Text.RegularExpressions;
 using System.Diagnostics;
 using System.Threading;
 using System.Threading.Tasks;
+using Novalist.Sdk.Models;
 using Novalist.Extensions.AiAssistant.Models;
 using Novalist.Sdk.Services;
 
@@ -142,6 +143,19 @@ public sealed class CharacterKnowledgeService
             && existing.SchemaVersion >= CharacterSceneKnowledge.CurrentSchemaVersion)
             return existing;
 
+        // Prefer the shared scene record: if any feature has already analysed
+        // this scene, the character's knowledge is a projection of it and costs
+        // no model call at all. Only fall back to the per-character prompt when
+        // no record exists yet.
+        var record = await _host.GetSceneAnalysisAsync(scene.Id).ConfigureAwait(false);
+        if (record != null
+            && !await _host.IsSceneAnalysisStaleAsync(scene.Id, sceneText).ConfigureAwait(false))
+        {
+            var projected = ProjectFromRecord(record, character, hash);
+            await UpsertAsync(file, projected).ConfigureAwait(false);
+            return projected;
+        }
+
         // No alias prefilter — let the LLM decide whether the character is
         // actually present. The prompt instructs it to set present=false when
         // the character is only mentioned or absent.
@@ -155,6 +169,109 @@ public sealed class CharacterKnowledgeService
 
         await UpsertAsync(file, built).ConfigureAwait(false);
         return built;
+    }
+
+    /// <summary>
+    /// Turns one shared scene record into this character's slice of it.
+    ///
+    /// The record already says what every present character perceived, so a
+    /// character's knowledge is a projection of it rather than a question worth
+    /// asking a model again. A character the record does not list was not there,
+    /// which is stored as a present=false entry so the scene is not reconsidered
+    /// on the next pass.
+    /// </summary>
+    internal static CharacterSceneKnowledge ProjectFromRecord(
+        SceneAnalysisRecord record, CharacterInfo character, string sceneContentHash)
+    {
+        var entry = new CharacterSceneKnowledge
+        {
+            SchemaVersion = CharacterSceneKnowledge.CurrentSchemaVersion,
+            SceneId = record.SceneId,
+            ChapterGuid = record.ChapterGuid,
+            ChapterTitle = record.ChapterTitle,
+            SceneTitle = record.SceneTitle,
+            SceneContentHash = sceneContentHash,
+            GeneratedAt = DateTime.UtcNow,
+            ModelId = record.ModelId,
+            Present = false,
+        };
+
+        // Prefer the resolved id; fall back to the name for entries written
+        // before ids were recorded, or for a character the Codex does not hold.
+        var slice = record.Characters.FirstOrDefault(c =>
+                !string.IsNullOrEmpty(c.CharacterId)
+                && string.Equals(c.CharacterId, character.Id, StringComparison.OrdinalIgnoreCase))
+            ?? record.Characters.FirstOrDefault(c =>
+                string.Equals(c.Name, character.DisplayName, StringComparison.OrdinalIgnoreCase)
+                || EnumerateAliases(character).Any(a =>
+                    string.Equals(a, c.Name, StringComparison.OrdinalIgnoreCase)));
+
+        if (slice == null || slice.Presence != ScenePresence.Present) return entry;
+
+        entry.Present = true;
+        entry.Observed = [.. slice.Observed];
+        entry.Learned = [.. slice.Learned];
+        entry.Said = [.. slice.Said];
+        entry.Uncertain = [.. slice.Uncertain];
+        entry.Emotion = slice.Emotion;
+        entry.Location = slice.Location;
+        entry.Companions = [.. slice.Companions];
+        entry.PhysicalState = slice.PhysicalState;
+        entry.Goals = [.. slice.Goals];
+        entry.RelationshipChanges = [.. slice.RelationshipChanges];
+        entry.Secrets = [.. slice.Secrets];
+        entry.VoiceNotes = slice.VoiceNotes;
+        entry.InventoryChanges = [.. slice.InventoryChanges];
+        return entry;
+    }
+
+    /// <summary>How many characters have stored knowledge entries. Used to decide
+    /// whether there is anything worth asking the user about on upgrade.</summary>
+    public async Task<int> CountStoredCharactersAsync()
+    {
+        var dir = KnowledgeRoot;
+        if (!await _host.FileService.DirectoryExistsAsync(dir).ConfigureAwait(false)) return 0;
+
+        var count = 0;
+        foreach (var path in await _host.FileService.GetFilesAsync(dir, "*.json").ConfigureAwait(false))
+        {
+            try
+            {
+                var json = await _host.FileService.ReadTextAsync(path).ConfigureAwait(false);
+                if (string.IsNullOrWhiteSpace(json)) continue;
+                var file = JsonSerializer.Deserialize<CharacterKnowledgeFile>(json);
+                if (file?.Scenes.Count > 0) count++;
+            }
+            catch (JsonException)
+            {
+                // A corrupt file is not worth counting or failing over.
+            }
+        }
+        return count;
+    }
+
+    /// <summary>Distributes one scene record across every selected character,
+    /// which is what turns a characters-by-scenes grid into one pass per scene.</summary>
+    public async Task ApplyRecordAsync(
+        SceneAnalysisRecord record,
+        IReadOnlyList<CharacterInfo> characters,
+        string sceneText,
+        CancellationToken cancellationToken = default)
+    {
+        var hash = HashContent(sceneText);
+        foreach (var character in characters)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var entry = ProjectFromRecord(record, character, hash);
+            var fileLock = LockFor(character.Id);
+            await fileLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                var file = await LoadAsync(character.Id).ConfigureAwait(false);
+                await UpsertAsync(file, entry).ConfigureAwait(false);
+            }
+            finally { fileLock.Release(); }
+        }
     }
 
     private async Task UpsertAsync(CharacterKnowledgeFile file, CharacterSceneKnowledge entry)

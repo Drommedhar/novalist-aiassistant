@@ -25,9 +25,18 @@ public class AiService : IAiService
     private int _repeatLastN = 64;
     private string _systemPrompt = string.Empty;
     private readonly CopilotAcpClient _copilotClient = new();
+    private readonly ClaudeCliClient _claudeClient = new();
 
     /// <summary>Language name for prompts (e.g. "English", "German").</summary>
     public string LanguageName { get; set; } = "English";
+
+    /// <summary>The configured model id for the active provider, so generated
+    /// data is stamped with the model that actually produced it. Empty when none
+    /// is selected.</summary>
+    public string ModelName =>
+        IsClaude ? _claudeClient.ModelId
+        : IsCopilot ? _copilotClient.ModelId
+        : _model;
 
     private CancellationTokenSource? _cts;
 
@@ -40,6 +49,12 @@ public class AiService : IAiService
 
     private bool IsCopilot => _provider == "copilot";
     public bool IsCopilotProvider => IsCopilot;
+
+    private bool IsClaude => _provider == "claude";
+
+    /// <summary>The CLI providers each drive one subprocess with one in-flight
+    /// prompt, so callers must run their scenes serially rather than fanning out.</summary>
+    public bool IsSerialProvider => IsCopilot || IsClaude;
 
     public void Configure(AiSettings settings)
     {
@@ -65,12 +80,16 @@ public class AiService : IAiService
         _systemPrompt = settings.SystemPrompt;
         _copilotClient.ExecPath = settings.CopilotPath;
         _copilotClient.ModelId = settings.CopilotModel;
+        _claudeClient.ExecPath = settings.ClaudePath;
+        _claudeClient.ModelId = settings.ClaudeModel;
     }
 
     public void Cancel()
     {
         if (IsCopilot)
             _copilotClient.CancelPrompt();
+        if (IsClaude)
+            _claudeClient.CancelPrompt();
         _cts?.Cancel();
     }
 
@@ -80,6 +99,8 @@ public class AiService : IAiService
     {
         if (IsCopilot)
             return await _copilotClient.IsAvailableAsync().ConfigureAwait(false);
+        if (IsClaude)
+            return await _claudeClient.IsAvailableAsync().ConfigureAwait(false);
 
         try
         {
@@ -102,6 +123,17 @@ public class AiService : IAiService
             return copilotModels.Select(m => new AiModelInfo
             {
                 Key = m.Id,
+                DisplayName = m.Name,
+                SizeBytes = 0,
+            }).ToList();
+        }
+
+        if (IsClaude)
+        {
+            // The CLI has no model-discovery call; the aliases it accepts are fixed.
+            return ClaudeCliClient.KnownModels.Select(m => new AiModelInfo
+            {
+                Key = m.Key,
                 DisplayName = m.Name,
                 SizeBytes = 0,
             }).ToList();
@@ -301,6 +333,8 @@ public class AiService : IAiService
     {
         if (IsCopilot)
             return await GenerateChatCopilotAsync(messages, onChunk, onThinkingChunk, cancellationToken);
+        if (IsClaude)
+            return await GenerateChatClaudeAsync(messages, onChunk, onThinkingChunk, cancellationToken);
 
         await EnsureModelLoadedAsync().ConfigureAwait(false);
 
@@ -518,6 +552,38 @@ public class AiService : IAiService
         {
             _copilotClient.OnChunk = null;
             _copilotClient.OnThinkingChunk = null;
+            _cts = null;
+        }
+    }
+
+    /// <summary>Generate chat via the Claude CLI — one prompt per call, no
+    /// server-side session. The CLI takes a genuine system prompt, so system
+    /// turns keep their role instead of being flattened in with the user text.</summary>
+    private async Task<AiChatResult> GenerateChatClaudeAsync(
+        List<AiChatMessage> messages,
+        Action<string>? onChunk,
+        Action<string>? onThinkingChunk,
+        CancellationToken cancellationToken)
+    {
+        _cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        _claudeClient.OnChunk = onChunk;
+        _claudeClient.OnThinkingChunk = onThinkingChunk;
+
+        var system = string.Join("\n\n",
+            messages.Where(m => m.Role == "system").Select(m => m.Content));
+        var user = string.Join("\n\n",
+            messages.Where(m => m.Role != "system").Select(m => m.Content));
+
+        try
+        {
+            var response = await _claudeClient
+                .GenerateAsync(system, user, _cts.Token).ConfigureAwait(false);
+            return new AiChatResult { Response = response, Thinking = string.Empty };
+        }
+        finally
+        {
+            _claudeClient.OnChunk = null;
+            _claudeClient.OnThinkingChunk = null;
             _cts = null;
         }
     }

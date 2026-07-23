@@ -65,6 +65,12 @@ public static class AiSetupWizard
                             Label = T("wizard.ai.provider.copilot", "GitHub Copilot CLI"),
                             Description = T("wizard.ai.provider.copilotDesc", "Uses the copilot binary on PATH. Requires a Copilot subscription."),
                         },
+                        new WizardChoice
+                        {
+                            Value = "claude",
+                            Label = T("wizard.ai.provider.claude", "Claude Code CLI"),
+                            Description = T("wizard.ai.provider.claudeDesc", "Uses the claude binary on PATH. Fast; runs on your own Claude subscription or API key."),
+                        },
                     ],
                 },
 
@@ -112,6 +118,23 @@ public static class AiSetupWizard
 
                 new TextStep
                 {
+                    Id = "claudePath",
+                    Title = T("wizard.ai.claudePath.title", "Claude Code CLI path"),
+                    Help = T("wizard.ai.claudePath.help", "Path or command name. \"claude\" works if the binary is on PATH."),
+                    Placeholder = "claude",
+                    VisibleWhen = new WizardCondition { StepId = "provider", Operator = "equals", Value = "claude" },
+                },
+                new TextStep
+                {
+                    Id = "claudeModel",
+                    Title = T("wizard.ai.claudeModel.title", "Claude model"),
+                    Help = T("wizard.ai.claudeModel.help", "An alias the CLI accepts: sonnet, opus, haiku, or fable."),
+                    Placeholder = "sonnet",
+                    VisibleWhen = new WizardCondition { StepId = "provider", Operator = "equals", Value = "claude" },
+                },
+
+                new TextStep
+                {
                     Id = "responseLanguage",
                     Title = T("wizard.ai.responseLanguage.title", "Response language"),
                     Help = T("wizard.ai.responseLanguage.help", "Empty = follow the app's UI language."),
@@ -148,6 +171,13 @@ public static class AiSetupWizard
             if (!string.IsNullOrWhiteSpace(path)) settings.CopilotPath = path;
             var model = result.GetText("copilotModel");
             settings.CopilotModel = model ?? string.Empty;
+        }
+        else if (string.Equals(provider, "claude", System.StringComparison.OrdinalIgnoreCase))
+        {
+            var path = result.GetText("claudePath");
+            if (!string.IsNullOrWhiteSpace(path)) settings.ClaudePath = path;
+            var model = result.GetText("claudeModel");
+            if (!string.IsNullOrWhiteSpace(model)) settings.ClaudeModel = model;
         }
 
         var lang = result.GetText("responseLanguage");

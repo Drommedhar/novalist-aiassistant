@@ -36,12 +36,31 @@ button:disabled { opacity: .5; cursor: default; }
 <body>
 <div id="messages"></div>
 <div id="composer">
-  <textarea id="input" rows="2" placeholder="Ask about your story..."></textarea>
-  <button id="send">Send</button>
-  <button id="cancel" class="secondary" hidden>Stop</button>
-  <button id="reset" class="secondary">Clear</button>
+  <textarea id="input" rows="2" data-i18n-ph="placeholder" placeholder="Ask about your story..."></textarea>
+  <button id="send" data-i18n="send">Send</button>
+  <button id="cancel" class="secondary" data-i18n="stop" hidden>Stop</button>
+  <button id="reset" class="secondary" data-i18n="clear">Clear</button>
 </div>
 <script>
+// Localisation: every label comes from the host, so the view holds no English
+// of its own and follows the project language.
+let S = {};
+function t(key, fallback) { return S[key] || fallback || ''; }
+function tf(key, fallback, ...args) {
+  return t(key, fallback).replace(/\{(\d+)\}/g, (m, i) => args[Number(i)] ?? m);
+}
+function applyStrings(map) {
+  if (!map) return;
+  S = map;
+  for (const el of document.querySelectorAll('[data-i18n]')) {
+    const v = S[el.getAttribute('data-i18n')];
+    if (v) el.textContent = v;
+  }
+  for (const el of document.querySelectorAll('[data-i18n-ph]')) {
+    const v = S[el.getAttribute('data-i18n-ph')];
+    if (v) el.setAttribute('placeholder', v);
+  }
+}
 const messagesEl = document.getElementById('messages');
 const inputEl = document.getElementById('input');
 const sendBtn = document.getElementById('send');
@@ -71,6 +90,7 @@ window.addEventListener('message', (event) => {
   const raw = event.data && event.data.novalistHost;
   if (typeof raw !== 'string') return;
   const msg = JSON.parse(raw);
+  applyStrings(msg.strings);
   if (msg.type === 'history') {
     messagesEl.textContent = '';
     for (const m of msg.messages) addMessage(m.role, m.text, m.thinking);

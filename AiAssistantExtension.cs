@@ -7,7 +7,7 @@ using Novalist.Sdk.Services;
 
 namespace Novalist.Extensions.AiAssistant;
 
-public sealed class AiAssistantExtension : IExtension, IRibbonContributor, ISettingsSchemaContributor, IGrammarCheckContributor, IArticleGeneratorContributor, IContextMenuContributor, IWizardContributor, Novalist.Sdk.Hooks.IWebViewContributor
+public sealed class AiAssistantExtension : IExtension, IStatusBarContributor, IRibbonContributor, ISettingsSchemaContributor, IGrammarCheckContributor, IArticleGeneratorContributor, IEntityExtractionContributor, IContextMenuContributor, IWizardContributor, Novalist.Sdk.Hooks.IWebViewContributor
 {
     public string Id => "com.novalist.ai";
     public string DisplayName => "AI Assistant";
@@ -44,10 +44,12 @@ public sealed class AiAssistantExtension : IExtension, IRibbonContributor, ISett
     private InlineRewriteService? _inlineRewriteService;
     private SceneSynopsisService? _synopsisService;
     private ArticleGeneratorService? _articleGenerator;
+    private EntityExtractionService? _entityExtractor;
 
     private bool _isChatVisible;
     private bool _isCharacterChatVisible;
     private bool _isAnalysisVisible;
+    private bool _isKnowledgeVisible;
     private SceneInfo? _lastOpenedScene;
     private List<CharacterInfo> _charactersCache = [];
 
@@ -89,12 +91,35 @@ public sealed class AiAssistantExtension : IExtension, IRibbonContributor, ISett
         return _articleGenerator.GenerateAsync(request, cancellationToken);
     }
 
+    // ── IEntityExtractionContributor ────────────────
+
+    public string EntityExtractorName => "AI Assistant";
+
+    public bool IsEntityExtractorEnabled => Settings.Enabled && _entityExtractor != null;
+
+    public Task<EntityExtractionResult> ExtractAsync(
+        EntityExtractionRequest request, CancellationToken cancellationToken = default)
+    {
+        if (_entityExtractor == null)
+            return Task.FromResult(new EntityExtractionResult { Error = _loc.T("extract.noModel") });
+        return _entityExtractor.ExtractAsync(request, cancellationToken);
+    }
+
     // Icon paths (Lucide)
     private const string IconMessageSquare = "M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z";
     private const string IconSearch = "M11 17.25a6.25 6.25 0 1 1 0-12.5 6.25 6.25 0 0 1 0 12.5zm0 0L16.65 22.9";
     private const string IconUser = "M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2 M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z";
+    private const string IconBook = "M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z";
 
     private bool _setupWizardChecked;
+    private bool _legacyKnowledgeChecked;
+
+    // Background analysis state, surfaced in the status bar so a pass the user
+    // did not start is never invisible.
+    private int _backgroundAnalysisToken;
+    private volatile string _backgroundSceneTitle = string.Empty;
+    private volatile bool _backgroundRunning;
+    private int _backgroundAnalysed;
 
     public void Initialize(IHostServices host)
     {
@@ -115,6 +140,7 @@ public sealed class AiAssistantExtension : IExtension, IRibbonContributor, ISett
 
         _synopsisService = new SceneSynopsisService(AiService, host, _loc);
         _articleGenerator = new ArticleGeneratorService(AiService, _loc);
+        _entityExtractor = new EntityExtractionService(AiService, _loc);
 
         host.LanguageChanged += OnLanguageChanged;
         host.SceneOpened += scene =>
@@ -138,8 +164,59 @@ public sealed class AiAssistantExtension : IExtension, IRibbonContributor, ISett
                 _setupWizardChecked = true;
                 _ = RunSetupWizardAsync();
             }
+
+            _ = AskAboutLegacyKnowledgeAsync();
         };
         _ = ReloadCharactersAsync();
+    }
+
+    /// <summary>
+    /// On first open after the upgrade, asks what to do with character knowledge
+    /// built by the old per-character pass. Asked once per project — the answer
+    /// is remembered — and only when such data actually exists.
+    /// </summary>
+    private async Task AskAboutLegacyKnowledgeAsync()
+    {
+        try
+        {
+            if (_legacyKnowledgeChecked) return;
+            _legacyKnowledgeChecked = true;
+
+            if (!string.IsNullOrEmpty(Settings.KnowledgeMigrationChoice)) return;
+            if (_knowledgeService == null) return;
+
+            var stored = await _knowledgeService.CountStoredCharactersAsync();
+            if (stored == 0)
+            {
+                // Nothing to decide about; record that so we never ask later,
+                // once the new pipeline has written entries of its own.
+                Settings.KnowledgeMigrationChoice = Services.KnowledgeMigrationWizard.KeepValue;
+                SaveSettings();
+                return;
+            }
+
+            var result = await _host.RunWizardAsync(
+                Services.KnowledgeMigrationWizard.Build(_loc.T, stored));
+            if (result == null || !result.Completed) return;   // ask again next time
+
+            var choice = result.GetText(Services.KnowledgeMigrationWizard.StepId);
+            if (string.Equals(choice, Services.KnowledgeMigrationWizard.ClearValue,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                await _knowledgeService.ClearCacheAsync();
+                _host.ShowNotification(_loc.T("toast.knowledgeCleared"));
+            }
+
+            Settings.KnowledgeMigrationChoice =
+                string.IsNullOrWhiteSpace(choice)
+                    ? Services.KnowledgeMigrationWizard.KeepValue
+                    : choice;
+            SaveSettings();
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[AiAssistant] legacy knowledge prompt failed: {ex.GetType().Name}");
+        }
     }
 
     private async Task ReloadCharactersAsync()
@@ -165,9 +242,96 @@ public sealed class AiAssistantExtension : IExtension, IRibbonContributor, ISett
             // Cheaper than scanning content again, and lazy regen handles it.
             foreach (var character in _charactersCache)
                 await _knowledgeService.InvalidateSceneAsync(scene.Id, [character.Id]);
+
+            if (Settings.BackgroundSceneAnalysis)
+                await AnalyseSceneInBackgroundAsync(scene);
         }
         catch { }
     }
+
+    /// <summary>
+    /// Re-analyses a saved scene so the record is ready before anything asks for
+    /// it. Opt-in, because it spends model time without the user initiating it,
+    /// and deliberately quiet: a failure here must never interrupt writing.
+    /// </summary>
+    private async Task AnalyseSceneInBackgroundAsync(SceneInfo scene)
+    {
+        if (!Settings.Enabled) return;
+
+        // Coalesce rapid saves: only the last edit of a burst is worth analysing.
+        var token = Interlocked.Increment(ref _backgroundAnalysisToken);
+        await Task.Delay(TimeSpan.FromSeconds(20)).ConfigureAwait(false);
+        if (Volatile.Read(ref _backgroundAnalysisToken) != token) return;
+
+        try
+        {
+            var chapter = _host.ProjectService.GetChaptersOrdered()
+                .FirstOrDefault(c => c.Guid == scene.ChapterGuid);
+            if (chapter == null) return;
+
+            var sceneText = await _host.ProjectService
+                .ReadSceneContentAsync(chapter.Guid, scene.Id).ConfigureAwait(false);
+            if (string.IsNullOrWhiteSpace(sceneText)) return;
+            if (!await _host.IsSceneAnalysisStaleAsync(scene.Id, sceneText).ConfigureAwait(false))
+                return;
+
+            var chatVm = new ViewModels.AiChatViewModel(_host, this);
+            var entities = await chatVm.CollectEntitySummariesAsync().ConfigureAwait(false);
+            var checks = new EnabledChecks
+            {
+                References = Settings.CheckReferences,
+                Inconsistencies = Settings.CheckInconsistencies,
+                Suggestions = Settings.CheckSuggestions,
+                SceneStats = Settings.CheckSceneStats,
+            };
+
+            var request = await Services.SceneAnalysisService.BuildRequestAsync(
+                _host, chapter.Guid, chapter.Title, scene.Id, scene.Title,
+                sceneText, entities, checks).ConfigureAwait(false);
+
+            // The renderer polls status items once a second, so setting the
+            // fields is enough — there is no refresh call to make.
+            _backgroundSceneTitle = scene.Title;
+            _backgroundRunning = true;
+            try
+            {
+                var record = await new Services.SceneAnalysisService(AiService, _loc)
+                    .GetOrCreateAsync(_host, request, CancellationToken.None).ConfigureAwait(false);
+                if (record != null) Interlocked.Increment(ref _backgroundAnalysed);
+            }
+            finally
+            {
+                _backgroundRunning = false;
+                _backgroundSceneTitle = string.Empty;
+            }
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine(
+                $"[AiAssistant] background scene analysis failed: {ex.GetType().Name}");
+        }
+    }
+
+    // ── IStatusBarContributor ───────────────────────────────────────
+
+    public IReadOnlyList<StatusBarItem> GetStatusBarItems() =>
+    [
+        new StatusBarItem
+        {
+            Id = "ai.backgroundAnalysis",
+            Alignment = "Right",
+            Order = 60,
+            GetText = () =>
+            {
+                if (!Settings.BackgroundSceneAnalysis) return string.Empty;
+                if (_backgroundRunning)
+                    return _loc.T("status.analysingScene", _backgroundSceneTitle);
+                var done = Volatile.Read(ref _backgroundAnalysed);
+                return done > 0 ? _loc.T("status.scenesAnalysed", done) : string.Empty;
+            },
+            GetTooltip = () => _loc.T("status.backgroundTooltip"),
+        },
+    ];
 
     internal async Task<bool> ClearKnowledgeCacheAsync()
     {
@@ -222,16 +386,60 @@ public sealed class AiAssistantExtension : IExtension, IRibbonContributor, ISett
                 ordered.Add((chapter, scene));
         }
 
-        // LM Studio handles concurrent requests; Copilot CLI runs serial.
-        var parallelism = AiService.IsCopilotProvider ? 1 : Math.Max(1, Settings.MaxParallelPrompts);
+        // One pass per scene, not one per character-and-scene. The shared scene
+        // record already describes every present character, so the scan costs a
+        // call per scene instead of characters x scenes — and a scene another
+        // feature already analysed costs nothing at all.
+        var chatVm = new ViewModels.AiChatViewModel(_host, this);
+        var entities = await chatVm.CollectEntitySummariesAsync().ConfigureAwait(false);
+        var checks = new EnabledChecks
+        {
+            References = Settings.CheckReferences,
+            Inconsistencies = Settings.CheckInconsistencies,
+            Suggestions = Settings.CheckSuggestions,
+            SceneStats = Settings.CheckSceneStats,
+        };
+        var sceneAnalysis = new Services.SceneAnalysisService(AiService, _loc);
 
-        await _knowledgeService.ScanAsync(
-            selectedCharacters,
-            ordered,
-            async (chapter, scene) => await _host.ProjectService.ReadSceneContentAsync(chapter.Guid, scene.Id),
-            progress,
-            cancellationToken,
-            parallelism);
+        for (var i = 0; i < ordered.Count; i++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var (chapter, scene) = ordered[i];
+
+            var sceneText = await _host.ProjectService
+                .ReadSceneContentAsync(chapter.Guid, scene.Id).ConfigureAwait(false);
+            if (string.IsNullOrWhiteSpace(sceneText)) continue;
+
+            progress.Report(new KnowledgeScanProgress
+            {
+                OverallDone = i,
+                OverallTotal = ordered.Count,
+                SceneIndex = i + 1,
+                SceneTotal = ordered.Count,
+                SceneTitle = scene.Title,
+                ChapterTitle = chapter.Title,
+                CharacterTotal = selectedCharacters.Count,
+            });
+
+            var request = await Services.SceneAnalysisService.BuildRequestAsync(
+                _host, chapter.Guid, chapter.Title, scene.Id, scene.Title,
+                sceneText, entities, checks).ConfigureAwait(false);
+            var record = await sceneAnalysis
+                .GetOrCreateAsync(_host, request, cancellationToken).ConfigureAwait(false);
+            if (record == null) continue;   // model unreachable; leave the scene for a later pass
+
+            await _knowledgeService
+                .ApplyRecordAsync(record, selectedCharacters, sceneText, cancellationToken)
+                .ConfigureAwait(false);
+        }
+
+        progress.Report(new KnowledgeScanProgress
+        {
+            OverallDone = ordered.Count,
+            OverallTotal = ordered.Count,
+            SceneTotal = ordered.Count,
+            CharacterTotal = selectedCharacters.Count,
+        });
 
         Settings.KnowledgeScanCompleted = true;
         SaveSettings();
@@ -273,6 +481,10 @@ public sealed class AiAssistantExtension : IExtension, IRibbonContributor, ISett
             seed.Answers["copilotPath"] = new Novalist.Sdk.Models.Wizards.WizardAnswer { Text = Settings.CopilotPath };
         if (!string.IsNullOrEmpty(Settings.CopilotModel))
             seed.Answers["copilotModel"] = new Novalist.Sdk.Models.Wizards.WizardAnswer { Text = Settings.CopilotModel };
+        if (!string.IsNullOrEmpty(Settings.ClaudePath))
+            seed.Answers["claudePath"] = new Novalist.Sdk.Models.Wizards.WizardAnswer { Text = Settings.ClaudePath };
+        if (!string.IsNullOrEmpty(Settings.ClaudeModel))
+            seed.Answers["claudeModel"] = new Novalist.Sdk.Models.Wizards.WizardAnswer { Text = Settings.ClaudeModel };
         if (!string.IsNullOrEmpty(Settings.ResponseLanguage))
             seed.Answers["responseLanguage"] = new Novalist.Sdk.Models.Wizards.WizardAnswer { Text = Settings.ResponseLanguage };
 
@@ -326,12 +538,14 @@ public sealed class AiAssistantExtension : IExtension, IRibbonContributor, ISett
             Fields =
             [
                 Bool("enabled", _loc.T("settings.aiEnabled"), Settings.Enabled, providerGroup, _loc.T("settings.aiEnabledDesc")),
-                Select("provider", _loc.T("settings.aiProvider"), Settings.Provider, ["lmstudio", "copilot"], providerGroup),
+                Select("provider", _loc.T("settings.aiProvider"), Settings.Provider, ["lmstudio", "copilot", "claude"], providerGroup),
                 Text("lmStudioBaseUrl", _loc.T("settings.aiBaseUrl"), Settings.LmStudioBaseUrl, providerGroup, "provider", LmStudio),
                 Text("lmStudioModel", _loc.T("settings.aiModel"), Settings.LmStudioModel, providerGroup, "provider", LmStudio, _availableModels),
                 Password("lmStudioApiToken", _loc.T("settings.aiApiToken"), Settings.LmStudioApiToken, providerGroup, "provider", LmStudio),
                 Text("copilotPath", _loc.T("settings.aiCopilotPath"), Settings.CopilotPath, providerGroup, "provider", Copilot),
                 Text("copilotModel", _loc.T("settings.aiCopilotModel"), Settings.CopilotModel, providerGroup, "provider", Copilot, _availableModels),
+                Text("claudePath", _loc.T("settings.aiClaudePath"), Settings.ClaudePath, providerGroup, "provider", Claude),
+                Text("claudeModel", _loc.T("settings.aiClaudeModel"), Settings.ClaudeModel, providerGroup, "provider", Claude, _availableModels),
                 Action("refreshModels", _loc.T("settings.aiRefreshModels"), providerGroup, null, []),
                 Number("temperature", _loc.T("settings.aiTemperature"), Settings.Temperature, 0, 2, paramsGroup),
                 Number("contextLength", _loc.T("settings.aiContextLength"), Settings.ContextLength, 0, 131072, paramsGroup),
@@ -347,6 +561,7 @@ public sealed class AiAssistantExtension : IExtension, IRibbonContributor, ISett
                 Bool("grammarCheckEnabled", _loc.T("settings.aiGrammarCheckEnabled"), Settings.GrammarCheckEnabled, checksGroup, _loc.T("settings.aiGrammarCheckEnabledDesc")),
                 Bool("enableCharacterKnowledge", _loc.T("settings.knowledgeEnable"), Settings.EnableCharacterKnowledge, knowledgeGroup, _loc.T("settings.knowledgeDesc")),
                 Number("maxParallelPrompts", _loc.T("settings.knowledgeMaxParallel"), Settings.MaxParallelPrompts, 1, 32, knowledgeGroup),
+                Bool("backgroundSceneAnalysis", _loc.T("settings.backgroundAnalysis"), Settings.BackgroundSceneAnalysis, knowledgeGroup, _loc.T("settings.backgroundAnalysisDesc")),
                 Text("responseLanguage", _loc.T("settings.aiResponseLanguage"), Settings.ResponseLanguage, paramsGroup),
                 Multiline("systemPrompt", _loc.T("settings.aiSystemPrompt"), Settings.SystemPrompt, paramsGroup, _loc.T("settings.aiSystemPromptDesc")),
             ]
@@ -373,6 +588,8 @@ public sealed class AiAssistantExtension : IExtension, IRibbonContributor, ISett
         Settings.LmStudioApiToken = ReadStr("lmStudioApiToken", Settings.LmStudioApiToken);
         Settings.CopilotPath = ReadStr("copilotPath", Settings.CopilotPath);
         Settings.CopilotModel = ReadStr("copilotModel", Settings.CopilotModel);
+        Settings.ClaudePath = ReadStr("claudePath", Settings.ClaudePath);
+        Settings.ClaudeModel = ReadStr("claudeModel", Settings.ClaudeModel);
         Settings.Temperature = ReadNum("temperature", Settings.Temperature, 0, 2);
         Settings.ContextLength = ReadInt("contextLength", Settings.ContextLength, 0, 131072);
         Settings.TopP = ReadNum("topP", Settings.TopP, 0, 1);
@@ -387,6 +604,7 @@ public sealed class AiAssistantExtension : IExtension, IRibbonContributor, ISett
         Settings.GrammarCheckEnabled = ReadBool("grammarCheckEnabled", Settings.GrammarCheckEnabled);
         Settings.EnableCharacterKnowledge = ReadBool("enableCharacterKnowledge", Settings.EnableCharacterKnowledge);
         Settings.MaxParallelPrompts = ReadInt("maxParallelPrompts", Settings.MaxParallelPrompts, 1, 32);
+        Settings.BackgroundSceneAnalysis = ReadBool("backgroundSceneAnalysis", Settings.BackgroundSceneAnalysis);
         Settings.ResponseLanguage = ReadStr("responseLanguage", Settings.ResponseLanguage);
         Settings.SystemPrompt = ReadStr("systemPrompt", Settings.SystemPrompt);
 
@@ -405,6 +623,7 @@ public sealed class AiAssistantExtension : IExtension, IRibbonContributor, ISett
         Settings.LmStudioBaseUrl = Read("lmStudioBaseUrl", Settings.LmStudioBaseUrl);
         Settings.LmStudioApiToken = Read("lmStudioApiToken", Settings.LmStudioApiToken);
         Settings.CopilotPath = Read("copilotPath", Settings.CopilotPath);
+        Settings.ClaudePath = Read("claudePath", Settings.ClaudePath);
         ConfigureAiService();
 
         try
@@ -425,6 +644,7 @@ public sealed class AiAssistantExtension : IExtension, IRibbonContributor, ISett
 
     private static readonly string[] LmStudio = ["lmstudio"];
     private static readonly string[] Copilot = ["copilot"];
+    private static readonly string[] Claude = ["claude"];
 
     // Models fetched from the active provider by the "Refresh models" action,
     // offered as autocomplete suggestions on the model fields.
@@ -533,6 +753,18 @@ public sealed class AiAssistantExtension : IExtension, IRibbonContributor, ISett
                 IsActive = () => _isCharacterChatVisible,
                 OnClick = ToggleCharacterChat,
                 Size = "Large",
+            },
+            new RibbonItem
+            {
+                Tab = "View",
+                Group = _loc.T("ribbon.aiGroup"),
+                Label = _loc.T("ribbon.knowledge"),
+                IconPath = IconBook,
+                Tooltip = _loc.T("ribbon.knowledgeTooltip"),
+                IsToggle = true,
+                IsActive = () => _isKnowledgeVisible,
+                OnClick = ToggleKnowledge,
+                Size = "Large",
             }
         ];
     }
@@ -547,6 +779,12 @@ public sealed class AiAssistantExtension : IExtension, IRibbonContributor, ISett
     {
         _isChatVisible = !_isChatVisible;
         _host.ToggleRightSidebar("com.novalist.ai.chat");
+    }
+
+    private void ToggleKnowledge()
+    {
+        _isKnowledgeVisible = !_isKnowledgeVisible;
+        _host.ActivateContentView(_isKnowledgeVisible ? "com.novalist.ai.knowledge" : "");
     }
 
     private void ToggleStoryAnalysis()
@@ -565,6 +803,7 @@ public sealed class AiAssistantExtension : IExtension, IRibbonContributor, ISett
         "com.novalist.ai.characterChat.web" =>
             new Services.CharacterChatWebViewController(_host, this, () => _knowledgeService),
         "com.novalist.ai.analysis.web" => new Services.StoryAnalysisWebViewController(_host, this),
+        "com.novalist.ai.knowledge.web" => new Services.KnowledgeWebViewController(_host, this),
         _ => null
     };
 }

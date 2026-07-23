@@ -6,7 +6,9 @@
     "storyAnalysisTooltip": "Run AI story analysis",
     "characterChat": "Talk as character",
     "characterChatTooltip": "Roleplay as a character with scene-aware knowledge",
-    "aiGroup": "AI"
+    "aiGroup": "AI",
+    "knowledge": "Knowledge",
+    "knowledgeTooltip": "Browse what each character knows, scene by scene"
   },
   "settings": {
     "ai": "AI / LLM",
@@ -25,6 +27,8 @@
     "aiCopilotPathPlaceholder": "copilot",
     "aiCopilotModel": "Model",
     "aiCopilotModelPlaceholder": "e.g. gpt-4o (empty = default)",
+    "aiClaudePath": "Claude CLI Path",
+    "aiClaudeModel": "Model",
     "aiTestConnection": "Test Connection",
     "aiTesting": "Testing...",
     "aiConnected": "✓ Connected",
@@ -70,7 +74,9 @@
     "knowledgeScanCancelled": "Scan cancelled.",
     "knowledgeScanComplete": "Scan complete.",
     "knowledgeCancel": "Cancel",
-    "knowledgeClose": "Close"
+    "knowledgeClose": "Close",
+    "backgroundAnalysis": "Analyse scenes in the background",
+    "backgroundAnalysisDesc": "After you save a scene, analyse it quietly so the results are ready before a feature asks for them. Off by default because it uses the model without you starting it."
   },
   "characterChat": {
     "character": "Character",
@@ -85,13 +91,15 @@
     "reset": "Reset chat",
     "noSceneContext": "(no scene context)",
     "userLabel": "You",
-    "errorLabel": "Error"
+    "errorLabel": "Error",
+    "title": "Character Chat"
   },
   "toast": {
     "knowledgeClearSuccess": "Knowledge cache cleared.",
     "knowledgeClearFailed": "Knowledge cache could not be cleared.",
     "knowledgeClearFailedReason": "Knowledge cache clear failed: {0}",
-    "setupComplete": "AI Assistant configured."
+    "setupComplete": "AI Assistant configured.",
+    "knowledgeCleared": "Previous character knowledge cleared. Run the knowledge scan to rebuild it."
   },
   "inline": {
     "rewrite": "Rewrite",
@@ -155,7 +163,20 @@
     "stat.pov": "POV:",
     "stat.emotion": "Emotion:",
     "stat.intensity": "Intensity:",
-    "stat.conflict": "Conflict:"
+    "stat.conflict": "Conflict:",
+    "modelThinking": "Model thinking",
+    "modelOutput": "Model output",
+    "analysing": "Analysing...",
+    "noFindings": "No findings.",
+    "notAnalysed": "This chapter has not been analysed yet.",
+    "partiallyAnalysed": "{0} of {1} scenes analysed.",
+    "runToSeeFindings": "Run an analysis to see findings.",
+    "stopping": "Stopping...",
+    "running": "running",
+    "stop": "Stop",
+    "addToCodex": "Add to Codex",
+    "addedToCodex": "\"{0}\" added to the Codex.",
+    "addToCodexFailed": "Could not add \"{0}\" to the Codex."
   },
   "wizard": {
     "ai": {
@@ -204,5 +225,45 @@
         "placeholder": "English"
       }
     }
+  },
+  "extract": {
+    "noModel": "AI model is not available.",
+    "failedReason": "Entity extraction failed: {0}"
+  },
+  "status": {
+    "analysingScene": "Analysing: {0}",
+    "scenesAnalysed": "{0} scene(s) analysed",
+    "backgroundTooltip": "Background scene analysis (AI Assistant)"
+  },
+  "knowledge": {
+    "field": {
+      "observed": "Observed",
+      "learned": "Learned",
+      "said": "Said",
+      "uncertain": "Uncertain",
+      "emotion": "Emotion",
+      "location": "Location",
+      "companions": "Companions",
+      "physicalState": "Physical state",
+      "goals": "Goals",
+      "relationshipChanges": "Relationship changes",
+      "secrets": "Secrets",
+      "voiceNotes": "Voice notes",
+      "inventoryChanges": "Inventory changes"
+    },
+    "scan": "Scan scenes",
+    "stop": "Stop",
+    "loading": "Loading...",
+    "selectCharacter": "Select a character.",
+    "noCharacters": "No characters in this project.",
+    "notScanned": "not analysed yet",
+    "presentIn": "present in {0} of {1} analysed scene(s)",
+    "noData": "No knowledge recorded yet. Analyse the scenes to build it.",
+    "notPresent": "not present in this scene",
+    "untitledScene": "(untitled scene)",
+    "model": "model: {0}",
+    "starting": "Starting...",
+    "stopping": "Stopping...",
+    "error": "Error: {0}"
   }
 }

@@ -18,12 +18,14 @@ public sealed class ChatWebViewController : IWebViewController, IDisposable
         new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
     private readonly AiChatViewModel _vm;
+    private readonly IExtensionLocalization _loc;
 
     public event Action<string>? MessagePosted;
 
     public ChatWebViewController(IHostServices host, AiAssistantExtension extension)
     {
         _vm = new AiChatViewModel(host, extension);
+        _loc = host.GetLocalization(extension.Id);
         _vm.PropertyChanged += OnVmPropertyChanged;
         _vm.Messages.CollectionChanged += OnMessagesChanged;
     }
@@ -50,7 +52,16 @@ public sealed class ChatWebViewController : IWebViewController, IDisposable
                     type = "history",
                     messages = _vm.Messages
                         .Select(m => new { role = m.Role, text = m.Content, thinking = m.Thinking })
-                        .ToArray()
+                        .ToArray(),
+                    // Labels come from the host so the panel follows the project
+                    // language instead of being hardcoded English.
+                    strings = new Dictionary<string, string>
+                    {
+                        ["send"] = _loc.T("ai.send"),
+                        ["stop"] = _loc.T("ai.stop"),
+                        ["clear"] = _loc.T("ai.clearChat"),
+                        ["placeholder"] = _loc.T("ai.chatPlaceholder"),
+                    }
                 }, Json));
             default:
                 return Task.FromResult<string?>(null);
