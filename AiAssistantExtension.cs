@@ -538,10 +538,15 @@ public sealed class AiAssistantExtension : IExtension, IStatusBarContributor, IR
             Fields =
             [
                 Bool("enabled", _loc.T("settings.aiEnabled"), Settings.Enabled, providerGroup, _loc.T("settings.aiEnabledDesc")),
-                Select("provider", _loc.T("settings.aiProvider"), Settings.Provider, ["lmstudio", "copilot", "claude"], providerGroup),
+                Select("provider", _loc.T("settings.aiProvider"), Settings.Provider, ["lmstudio", "anthropic", "copilot", "claude"], providerGroup),
                 Text("lmStudioBaseUrl", _loc.T("settings.aiBaseUrl"), Settings.LmStudioBaseUrl, providerGroup, "provider", LmStudio),
                 Text("lmStudioModel", _loc.T("settings.aiModel"), Settings.LmStudioModel, providerGroup, "provider", LmStudio, _availableModels),
                 Password("lmStudioApiToken", _loc.T("settings.aiApiToken"), Settings.LmStudioApiToken, providerGroup, "provider", LmStudio),
+                Select("openAiCompatiblePreset", _loc.T("settings.aiPreset"), Settings.OpenAiCompatiblePreset,
+                    [.. AiSettings.OpenAiCompatiblePresets.Keys], providerGroup),
+                Password("anthropicApiKey", _loc.T("settings.aiAnthropicKey"), Settings.AnthropicApiKey, providerGroup, "provider", Anthropic),
+                Text("anthropicModel", _loc.T("settings.aiAnthropicModel"), Settings.AnthropicModel, providerGroup, "provider", Anthropic, _availableModels),
+                Text("anthropicBaseUrl", _loc.T("settings.aiAnthropicBaseUrl"), Settings.AnthropicBaseUrl, providerGroup, "provider", Anthropic),
                 Text("copilotPath", _loc.T("settings.aiCopilotPath"), Settings.CopilotPath, providerGroup, "provider", Copilot),
                 Text("copilotModel", _loc.T("settings.aiCopilotModel"), Settings.CopilotModel, providerGroup, "provider", Copilot, _availableModels),
                 Text("claudePath", _loc.T("settings.aiClaudePath"), Settings.ClaudePath, providerGroup, "provider", Claude),
@@ -590,6 +595,13 @@ public sealed class AiAssistantExtension : IExtension, IStatusBarContributor, IR
         Settings.CopilotModel = ReadStr("copilotModel", Settings.CopilotModel);
         Settings.ClaudePath = ReadStr("claudePath", Settings.ClaudePath);
         Settings.ClaudeModel = ReadStr("claudeModel", Settings.ClaudeModel);
+        Settings.AnthropicApiKey = ReadStr("anthropicApiKey", Settings.AnthropicApiKey);
+        Settings.AnthropicModel = ReadStr("anthropicModel", Settings.AnthropicModel);
+        Settings.AnthropicBaseUrl = ReadStr("anthropicBaseUrl", Settings.AnthropicBaseUrl);
+        // Picking a preset fills the base URL in; typing a URL by hand leaves it.
+        Settings.OpenAiCompatiblePreset = ReadStr("openAiCompatiblePreset", Settings.OpenAiCompatiblePreset);
+        if (AiSettings.BaseUrlForPreset(Settings.OpenAiCompatiblePreset) is { } presetUrl)
+            Settings.LmStudioBaseUrl = presetUrl;
         Settings.Temperature = ReadNum("temperature", Settings.Temperature, 0, 2);
         Settings.ContextLength = ReadInt("contextLength", Settings.ContextLength, 0, 131072);
         Settings.TopP = ReadNum("topP", Settings.TopP, 0, 1);
@@ -643,6 +655,7 @@ public sealed class AiAssistantExtension : IExtension, IStatusBarContributor, IR
     }
 
     private static readonly string[] LmStudio = ["lmstudio"];
+    private static readonly string[] Anthropic = ["anthropic"];
     private static readonly string[] Copilot = ["copilot"];
     private static readonly string[] Claude = ["claude"];
 

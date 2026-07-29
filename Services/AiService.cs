@@ -26,6 +26,7 @@ public class AiService : IAiService
     private string _systemPrompt = string.Empty;
     private readonly CopilotAcpClient _copilotClient = new();
     private readonly ClaudeCliClient _claudeClient = new();
+    private readonly AnthropicClient _anthropicClient = new();
 
     /// <summary>Language name for prompts (e.g. "English", "German").</summary>
     public string LanguageName { get; set; } = "English";
@@ -34,7 +35,8 @@ public class AiService : IAiService
     /// data is stamped with the model that actually produced it. Empty when none
     /// is selected.</summary>
     public string ModelName =>
-        IsClaude ? _claudeClient.ModelId
+        IsAnthropic ? _anthropicClient.ModelId
+        : IsClaude ? _claudeClient.ModelId
         : IsCopilot ? _copilotClient.ModelId
         : _model;
 
@@ -51,6 +53,10 @@ public class AiService : IAiService
     public bool IsCopilotProvider => IsCopilot;
 
     private bool IsClaude => _provider == "claude";
+
+    /// <summary>The Anthropic Messages API, talked to directly. Distinct from
+    /// "claude", which drives the Claude CLI as a subprocess.</summary>
+    private bool IsAnthropic => _provider == "anthropic";
 
     /// <summary>The CLI providers each drive one subprocess with one in-flight
     /// prompt, so callers must run their scenes serially rather than fanning out.</summary>
@@ -82,6 +88,10 @@ public class AiService : IAiService
         _copilotClient.ModelId = settings.CopilotModel;
         _claudeClient.ExecPath = settings.ClaudePath;
         _claudeClient.ModelId = settings.ClaudeModel;
+        _anthropicClient.ApiKey = settings.AnthropicApiKey;
+        _anthropicClient.ModelId = settings.AnthropicModel;
+        _anthropicClient.BaseUrl = settings.AnthropicBaseUrl;
+        _anthropicClient.MaxTokens = settings.AnthropicMaxTokens;
     }
 
     public void Cancel()
@@ -90,6 +100,8 @@ public class AiService : IAiService
             _copilotClient.CancelPrompt();
         if (IsClaude)
             _claudeClient.CancelPrompt();
+        if (IsAnthropic)
+            _anthropicClient.CancelPrompt();
         _cts?.Cancel();
     }
 
@@ -101,6 +113,8 @@ public class AiService : IAiService
             return await _copilotClient.IsAvailableAsync().ConfigureAwait(false);
         if (IsClaude)
             return await _claudeClient.IsAvailableAsync().ConfigureAwait(false);
+        if (IsAnthropic)
+            return await _anthropicClient.IsAvailableAsync().ConfigureAwait(false);
 
         try
         {
@@ -126,6 +140,13 @@ public class AiService : IAiService
                 DisplayName = m.Name,
                 SizeBytes = 0,
             }).ToList();
+        }
+
+        if (IsAnthropic)
+        {
+            // Asks the API which models this key can reach, rather than shipping
+            // a hardcoded list that goes stale on every model launch.
+            return await _anthropicClient.ListModelsAsync().ConfigureAwait(false);
         }
 
         if (IsClaude)
@@ -335,6 +356,8 @@ public class AiService : IAiService
             return await GenerateChatCopilotAsync(messages, onChunk, onThinkingChunk, cancellationToken);
         if (IsClaude)
             return await GenerateChatClaudeAsync(messages, onChunk, onThinkingChunk, cancellationToken);
+        if (IsAnthropic)
+            return await GenerateChatAnthropicAsync(messages, onChunk, cancellationToken);
 
         await EnsureModelLoadedAsync().ConfigureAwait(false);
 
@@ -584,6 +607,39 @@ public class AiService : IAiService
         {
             _claudeClient.OnChunk = null;
             _claudeClient.OnThinkingChunk = null;
+            _cts = null;
+        }
+    }
+
+    /// <summary>
+    /// Anthropic Messages API. The system prompt is hoisted out of the message
+    /// list into the request's own system field, which is where that API expects
+    /// it; everything else is passed through in order.
+    /// </summary>
+    private async Task<AiChatResult> GenerateChatAnthropicAsync(
+        List<AiChatMessage> messages,
+        Action<string>? onChunk,
+        CancellationToken cancellationToken)
+    {
+        _cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        try
+        {
+            var system = string.Join("\n\n",
+                messages.Where(m => m.Role == "system").Select(m => m.Content));
+            var turns = messages
+                .Where(m => m.Role != "system")
+                .Select(m => (m.Role, m.Content))
+                .ToList();
+
+            var response = await _anthropicClient
+                .GenerateAsync(system, turns, onChunk).ConfigureAwait(false);
+
+            // The Messages API never returns raw reasoning, so there is nothing
+            // to put in Thinking - leaving it empty is accurate, not a gap.
+            return new AiChatResult { Response = response, Thinking = string.Empty };
+        }
+        finally
+        {
             _cts = null;
         }
     }

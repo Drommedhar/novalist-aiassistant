@@ -28,9 +28,12 @@ Results are displayed as filterable findings you can browse by type or scene.
 
 All AI options are available under **Settings → AI / LLM**:
 
-- **Provider selection** — Choose between **LM Studio** (local LLMs on your machine) or **GitHub Copilot CLI** (cloud).
+- **Provider selection** — Choose between:
+  - **LM Studio / OpenAI-compatible** — any service that speaks the OpenAI chat protocol. An **Endpoint preset** drop-down fills in the address for LM Studio, Ollama, OpenAI, OpenRouter, Groq, DeepSeek, Mistral, Together and xAI, so you do not have to look the URL up. You can still type an address by hand for anything not listed.
+  - **Anthropic** — calls the Messages API directly with your own API key. Available models are fetched from the API rather than hardcoded, so a newly released model shows up without an extension update.
+  - **GitHub Copilot CLI** or **Claude CLI** — drives the command-line tool as a subprocess.
 - **Model management** — Browse and select from loaded models, refresh the model list, and test your connection.
-- **Generation parameters** — Temperature, top-P, min-P, context length, frequency penalty, and repeat-last-N.
+- **Generation parameters** — Temperature, top-P, min-P, context length, frequency penalty, and repeat-last-N. These apply to the OpenAI-compatible providers. They are deliberately **not** sent to Anthropic: current Claude models reject them, so the request would fail rather than being merely ignored.
 - **Analysis checks** — Toggle which checks run during story analysis (entity references, inconsistencies, suggestions, scene stats).
 - **Custom system prompt** — Override the default system prompt sent to the AI. Use `{{LANGUAGE}}` as a placeholder for the current UI language.
 - **Response language** — Force the AI to respond in a specific language regardless of the UI language.

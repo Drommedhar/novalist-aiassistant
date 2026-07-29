@@ -36,23 +36,71 @@ public sealed class InlineRewriteService : IInlineActionContributor
         new() { Id = "ai.showdonttell",  Label = _loc.T("inline.showDontTell"),  Group = Group, Priority = 50 },
         new() { Id = "ai.brainstorm",    Label = _loc.T("inline.brainstorm"),    Group = Group, Priority = 60 },
         new() { Id = "ai.brainstorm3",   Label = _loc.T("inline.brainstorm3"),   Group = Group, Priority = 65 },
+
+        // These two work from a bare caret rather than a selection, which is
+        // the point: the writer has stopped mid-scene with nothing highlighted.
+        // Reached from the slash menu as /continue and /beat.
+        new()
+        {
+            Id = "ai.continue",
+            Label = _loc.T("inline.continue"),
+            Group = Group,
+            Priority = 5,
+            AllowsEmptySelection = true,
+            SlashKeyword = "continue",
+        },
+        new()
+        {
+            Id = "ai.beat",
+            Label = _loc.T("inline.beat"),
+            Group = Group,
+            Priority = 6,
+            AllowsEmptySelection = true,
+            SlashKeyword = "beat",
+        },
     ];
 
     public async Task<InlineActionResult> ExecuteAsync(string actionId, InlineActionRequest request, CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(request.SelectedText))
+        var writesFromCaret = actionId is "ai.continue" or "ai.beat";
+
+        // Every other action transforms a passage, so it still needs one.
+        if (!writesFromCaret && string.IsNullOrWhiteSpace(request.SelectedText))
             return new InlineActionResult { Error = _loc.T("inline.noSelection") };
 
         var (sys, disposition) = BuildSystem(actionId);
         if (sys == null)
             return new InlineActionResult { Error = $"Unknown action: {actionId}" };
 
-        var user = $"TEXT:\n{request.SelectedText}";
+        string user;
+        if (writesFromCaret)
+        {
+            // The prose before the caret is what is being continued. Without it
+            // the model has nothing at all to go on, so this is the one input
+            // these two actions genuinely require.
+            var preceding = string.IsNullOrWhiteSpace(request.PrecedingText)
+                ? request.SelectedText
+                : request.PrecedingText;
+            if (string.IsNullOrWhiteSpace(preceding))
+                return new InlineActionResult { Error = _loc.T("inline.nothingToContinue") };
+
+            user = $"STORY SO FAR:\n{preceding}";
+            if (actionId == "ai.beat")
+            {
+                if (string.IsNullOrWhiteSpace(request.Directive))
+                    return new InlineActionResult { Error = _loc.T("inline.beatNeedsDirective") };
+                user += $"\n\nBEAT TO WRITE:\n{request.Directive}";
+            }
+        }
+        else
+        {
+            user = $"TEXT:\n{request.SelectedText}";
+        }
 
         // Brainstorm actions enrich the user message with preceding-scene context
         // and a character roster so continuations stay consistent with what came
         // before.
-        if (actionId is "ai.brainstorm" or "ai.brainstorm3")
+        if (actionId is "ai.brainstorm" or "ai.brainstorm3" or "ai.continue" or "ai.beat")
         {
             var ctx = await BuildBrainstormContextAsync(request, cancellationToken).ConfigureAwait(false);
             if (!string.IsNullOrEmpty(ctx))
@@ -92,6 +140,8 @@ public sealed class InlineRewriteService : IInlineActionContributor
             "ai.showdonttell" => ($"You convert telling into showing. The user has given a passage that states emotions, traits, or events flatly. Rewrite it to dramatize those facts through concrete sensory detail, action, and dialogue, without naming the underlying emotion or trait. Preserve point of view and tense. Output only the rewritten passage. Respond in {lang}.", InlineActionDisposition.ReplaceSelection),
             "ai.brainstorm" => ($"You write a single short continuation (1–3 sentences) that could follow the user's passage in the next beat of a novel. Match the voice, point of view, and tense. Use the surrounding scene context and character roster to stay consistent. Do not summarize. Output only the continuation text. Respond in {lang}.", InlineActionDisposition.InsertAfterSelection),
             "ai.brainstorm3" => ($"You propose three distinct continuations that could follow the user's passage in the next beat of a novel. Each option should be 1–3 sentences, divergent from the others (different action, tone, or stakes), and consistent with the voice, point of view, tense, scene context, and character roster supplied. Output exactly three numbered options as plain text:\n1. ...\n2. ...\n3. ...\nNo preamble, no commentary. Respond in {lang}.", InlineActionDisposition.InsertAfterSelection),
+            "ai.continue" => ($"You continue a novel from where its author stopped. Write the next 80-150 words of prose, picking up mid-flow from the final sentence you are given - do not restate it, do not summarize, do not open with a transition phrase. Match the voice, point of view, and tense exactly. Use the scene context and character roster to stay consistent. Output only the continuation. Respond in {lang}.", InlineActionDisposition.InsertAtCaret),
+            "ai.beat" => ($"You write one beat of a novel towards a specified event. The author gives you the story so far and a short directive describing what should happen next. Dramatize that beat in 80-200 words of prose - do not narrate it in summary, and do not go past it into the following beat. Match the voice, point of view, and tense of what came before. Output only the prose. Respond in {lang}.", InlineActionDisposition.InsertAtCaret),
             _ => (null, InlineActionDisposition.ReplaceSelection),
         };
     }
