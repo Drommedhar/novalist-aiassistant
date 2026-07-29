@@ -3,6 +3,7 @@ using Novalist.Extensions.AiAssistant.Services;
 using Novalist.Sdk;
 using Novalist.Sdk.Hooks;
 using Novalist.Sdk.Models;
+using Novalist.Sdk.Models.Wizards;
 using Novalist.Sdk.Services;
 
 namespace Novalist.Extensions.AiAssistant;
@@ -42,6 +43,11 @@ public sealed class AiAssistantExtension : IExtension, IStatusBarContributor, IR
     private CharacterKnowledgeService? _knowledgeService;
     private KnowledgeBuilder? _knowledgeBuilder;
     private InlineRewriteService? _inlineRewriteService;
+    private CritiqueService? _critiqueService;
+    private StoryBibleService? _storyBibleService;
+    private OutlineService? _outlineService;
+    internal ContextEngine ContextEngine { get; private set; } = new();
+    internal IReadOnlyList<SavedPrompt> Prompts { get; private set; } = [];
     private SceneSynopsisService? _synopsisService;
     private ArticleGeneratorService? _articleGenerator;
     private EntityExtractionService? _entityExtractor;
@@ -134,9 +140,17 @@ public sealed class AiAssistantExtension : IExtension, IStatusBarContributor, IR
         _knowledgeBuilder = new KnowledgeBuilder(AiService, host);
         _knowledgeService = new CharacterKnowledgeService(host, _knowledgeBuilder, Id);
 
-        _inlineRewriteService = new InlineRewriteService(AiService, host, _loc);
+        // The prompt list is read through a callback rather than passed by
+        // value, so editing a prompt shows up in the menu without a restart.
+        _inlineRewriteService = new InlineRewriteService(AiService, host, _loc, () => Prompts);
         System.Diagnostics.Debug.WriteLine($"[InlineActions] AiAssistant registering inline contributor. Actions: {string.Join(",", _inlineRewriteService.GetInlineActions().Select(a => a.Id))}");
         host.RegisterInlineActionContributor(_inlineRewriteService);
+
+        _critiqueService = new CritiqueService(AiService, host, _loc);
+        _storyBibleService = new StoryBibleService(AiService, host, _loc);
+        _outlineService = new OutlineService(AiService, host, _loc);
+        LoadPromptsAndContext();
+        RegisterAiCommands();
 
         _synopsisService = new SceneSynopsisService(AiService, host, _loc);
         _articleGenerator = new ArticleGeneratorService(AiService, _loc);
@@ -819,4 +833,393 @@ public sealed class AiAssistantExtension : IExtension, IStatusBarContributor, IR
         "com.novalist.ai.knowledge.web" => new Services.KnowledgeWebViewController(_host, this),
         _ => null
     };
+
+    // ── The features that write into the project ────────────────────
+    //
+    // Every one of these is a command rather than a button, for two reasons.
+    // They are all long-running things a writer starts deliberately, and a
+    // command is addressable - which means the scripting surface can drive them,
+    // and the writer can bind a key to the one they use.
+
+    private static readonly string[] AiCommandIds =
+    [
+        "com.novalist.ai.critique.scene",
+        "com.novalist.ai.critique.book",
+        "com.novalist.ai.bible",
+        "com.novalist.ai.outline",
+    ];
+
+    private void RegisterAiCommands()
+    {
+        _host.RegisterCommand(
+            new HostCommandInfo
+            {
+                Id = AiCommandIds[0],
+                Title = _loc.T("critique.sceneCommand"),
+                Description = _loc.T("critique.sceneDescription"),
+                Mutates = true,
+                ArgumentsSchema =
+                    """
+                    {"type":"object","properties":{
+                      "proposeEdits":{"type":"boolean",
+                        "description":"Also propose wordings, as suggested edits."}}}
+                    """,
+            },
+            argumentsJson => CritiqueOpenSceneAsync(ReadFlag(argumentsJson, "proposeEdits")));
+
+        _host.RegisterCommand(
+            new HostCommandInfo
+            {
+                Id = AiCommandIds[1],
+                Title = _loc.T("critique.bookCommand"),
+                Description = _loc.T("critique.bookDescription"),
+                Mutates = true,
+                ArgumentsSchema =
+                    """
+                    {"type":"object","properties":{"proposeEdits":{"type":"boolean"}}}
+                    """,
+            },
+            argumentsJson => CritiqueBookAsync(ReadFlag(argumentsJson, "proposeEdits")));
+
+        _host.RegisterCommand(
+            new HostCommandInfo
+            {
+                Id = AiCommandIds[2],
+                Title = _loc.T("bible.command"),
+                Description = _loc.T("bible.description"),
+                Mutates = true,
+            },
+            _ => BootstrapBibleAsync());
+
+        _host.RegisterCommand(
+            new HostCommandInfo
+            {
+                Id = AiCommandIds[3],
+                Title = _loc.T("outline.command"),
+                Description = _loc.T("outline.description"),
+                Mutates = true,
+                ArgumentsSchema =
+                    """
+                    {"type":"object","required":["premise"],"properties":{
+                      "premise":{"type":"string"},
+                      "chapters":{"type":"integer"},
+                      "structure":{"type":"string"}}}
+                    """,
+            },
+            OutlineFromPremiseAsync);
+    }
+
+    private void UnregisterAiCommands()
+    {
+        foreach (var id in AiCommandIds) _host.UnregisterCommand(id);
+    }
+
+    /// <summary>
+    /// Critiques the scene the writer is looking at. The open scene rather than a
+    /// named one, because that is the scene they are asking about.
+    /// </summary>
+    private async Task CritiqueOpenSceneAsync(bool proposeEdits)
+    {
+        var scene = _host.ProjectService.CurrentScene ?? _lastOpenedScene;
+        if (scene == null || string.IsNullOrEmpty(scene.ChapterGuid))
+        {
+            _host.ShowNotification(_loc.T("critique.noScene"));
+            return;
+        }
+
+        using var progress = _host.ShowBusyProgress(new BusyProgressOptions
+        {
+            Title = _loc.T("critique.sceneCommand"),
+            InitialStatus = scene.Title,
+            IsIndeterminate = true,
+            AllowCancel = true,
+        });
+
+        var report = await _critiqueService!.CritiqueSceneAsync(
+            scene.ChapterGuid, scene.Id, proposeEdits, progress.CancellationToken);
+        progress.Dispose();
+        Report(report);
+    }
+
+    private async Task CritiqueBookAsync(bool proposeEdits)
+    {
+        using var progress = _host.ShowBusyProgress(new BusyProgressOptions
+        {
+            Title = _loc.T("critique.bookCommand"),
+            IsIndeterminate = true,
+            AllowCancel = true,
+        });
+
+        var report = await _critiqueService!.CritiqueBookAsync(
+            proposeEdits,
+            new Progress<string>(where => progress.SetStatus(where)),
+            progress.CancellationToken);
+        progress.Dispose();
+        Report(report);
+    }
+
+    private void Report(CritiqueReport report)
+    {
+        if (report.Error != null)
+        {
+            _host.ShowNotification(report.Error);
+            return;
+        }
+        _host.ShowNotification(report.Suggestions > 0
+            ? _loc.T("critique.doneWithEdits")
+                .Replace("{0}", report.Comments.ToString())
+                .Replace("{1}", report.Suggestions.ToString())
+            : _loc.T("critique.done").Replace("{0}", report.Comments.ToString()));
+    }
+
+    /// <summary>
+    /// Reads the book and offers what it found. Nothing is created until the
+    /// writer has seen the list - a bad pass over a whole novel would otherwise
+    /// leave a hundred entries to delete one at a time.
+    /// </summary>
+    private async Task BootstrapBibleAsync()
+    {
+        using var progress = _host.ShowBusyProgress(new BusyProgressOptions
+        {
+            Title = _loc.T("bible.command"),
+            InitialStatus = _loc.T("bible.reading"),
+            IsIndeterminate = true,
+            AllowCancel = true,
+        });
+
+        var report = await _storyBibleService!.ProposeAsync(
+            new Progress<string>(where => progress.SetStatus(where)),
+            progress.CancellationToken);
+        progress.Dispose();
+
+        if (report.Error != null)
+        {
+            _host.ShowNotification(report.Error);
+            return;
+        }
+        if (report.Proposals.Count == 0)
+        {
+            _host.ShowNotification(_loc.T("bible.nothingNew"));
+            return;
+        }
+
+        var approved = await ApproveProposalsAsync(report);
+        if (approved.Count == 0) return;
+
+        var created = await _storyBibleService.CreateAsync(approved);
+        _host.EntityService.RequestEntityRefresh();
+        _host.ShowNotification(_loc.T("bible.created").Replace("{0}", created.ToString()));
+    }
+
+    /// <summary>
+    /// Shows what was found and lets the writer pick. A multi-select is the whole
+    /// safeguard here, so it is not skippable and nothing is pre-approved beyond
+    /// what the pass is confident about.
+    /// </summary>
+    private async Task<List<BibleProposal>> ApproveProposalsAsync(BibleReport report)
+    {
+        var choices = report.Proposals.Select(p => new WizardChoice
+        {
+            Value = p.Name,
+            Label = $"{p.Name} ({Kind(p.TypeKey)})",
+            Description = string.IsNullOrWhiteSpace(p.Summary)
+                ? _loc.T("bible.foundIn").Replace("{0}", p.FoundIn.Count.ToString())
+                : p.Summary,
+        }).ToList();
+
+        var result = await _host.RunWizardAsync(new WizardDefinition
+        {
+            Id = "com.novalist.ai.bible.approve",
+            DisplayName = _loc.T("bible.command"),
+            Description = _loc.T("bible.approveHelp").Replace("{0}", report.ScenesRead.ToString()),
+            Scope = WizardScope.Project,
+            Steps =
+            [
+                new ChoiceStep
+                {
+                    Id = "approved",
+                    Title = _loc.T("bible.approveTitle"),
+                    Help = _loc.T("bible.approveHint"),
+                    Skippable = false,
+                    MultiSelect = true,
+                    Choices = choices,
+                },
+            ],
+        });
+
+        if (result is not { Completed: true }) return [];
+
+        var picked = new HashSet<string>(result.GetMulti("approved"), StringComparer.Ordinal);
+        return [.. report.Proposals.Where(p => picked.Contains(p.Name))];
+    }
+
+    private string Kind(string typeKey) => _loc.T($"bible.kind.{typeKey}");
+
+    /// <summary>
+    /// Premise in, binder out. Asked for through a wizard when no arguments were
+    /// given, because a premise is a paragraph and a command palette is not where
+    /// somebody writes one.
+    /// </summary>
+    private async Task OutlineFromPremiseAsync(string? argumentsJson)
+    {
+        string premise;
+        var chapters = 24;
+        var structure = string.Empty;
+
+        if (string.IsNullOrWhiteSpace(argumentsJson))
+        {
+            var answers = await _host.RunWizardAsync(new WizardDefinition
+            {
+                Id = "com.novalist.ai.outline.ask",
+                DisplayName = _loc.T("outline.command"),
+                Description = _loc.T("outline.wizardHelp"),
+                Scope = WizardScope.Project,
+                Steps =
+                [
+                    new TextStep
+                    {
+                        Id = "premise",
+                        Title = _loc.T("outline.premiseTitle"),
+                        Help = _loc.T("outline.premiseHelp"),
+                        Multiline = true,
+                        Skippable = false,
+                    },
+                    new NumberStep
+                    {
+                        Id = "chapters",
+                        Title = _loc.T("outline.chaptersTitle"),
+                        Min = 3,
+                        Max = 80,
+                        DefaultValue = 24,
+                    },
+                    new TextStep
+                    {
+                        Id = "structure",
+                        Title = _loc.T("outline.structureTitle"),
+                        Help = _loc.T("outline.structureHelp"),
+                    },
+                ],
+            });
+
+            if (answers is not { Completed: true }) return;
+            premise = answers.GetText("premise");
+            chapters = answers.GetNumber("chapters", 24);
+            structure = answers.GetText("structure");
+        }
+        else
+        {
+            try
+            {
+                using var document = System.Text.Json.JsonDocument.Parse(argumentsJson);
+                premise = document.RootElement.TryGetProperty("premise", out var p)
+                    ? p.GetString() ?? string.Empty
+                    : string.Empty;
+                if (document.RootElement.TryGetProperty("chapters", out var c)
+                    && c.TryGetInt32(out var count)) chapters = count;
+                if (document.RootElement.TryGetProperty("structure", out var st))
+                    structure = st.GetString() ?? string.Empty;
+            }
+            catch (System.Text.Json.JsonException)
+            {
+                _host.ShowNotification(_loc.T("outline.badRequest"));
+                return;
+            }
+        }
+
+        using var progress = _host.ShowBusyProgress(new BusyProgressOptions
+        {
+            Title = _loc.T("outline.command"),
+            InitialStatus = _loc.T("outline.thinking"),
+            IsIndeterminate = true,
+            AllowCancel = true,
+        });
+
+        var outline = await _outlineService!.ProposeAsync(
+            premise, chapters, structure, progress.CancellationToken);
+        if (outline.Error != null)
+        {
+            progress.Dispose();
+            _host.ShowNotification(outline.Error);
+            return;
+        }
+        if (outline.Chapters.Count == 0)
+        {
+            progress.Dispose();
+            return;
+        }
+
+        progress.SetStatus(_loc.T("outline.building"));
+        var built = await _outlineService.MaterialiseAsync(outline, progress.CancellationToken);
+        progress.Dispose();
+
+        _host.ShowNotification(_loc.T("outline.built")
+            .Replace("{0}", built.Chapters.ToString())
+            .Replace("{1}", built.Scenes.ToString())
+            .Replace("{2}", built.Plotlines.ToString()));
+    }
+
+    // ── The writer's own prompts, and the context budget ────────────
+
+    private string PromptsPath => Path.Combine(
+        _host.GetExtensionSettingsPath(Id), "prompts.json");
+
+    private string ContextPath => Path.Combine(
+        _host.GetExtensionSettingsPath(Id), "context.json");
+
+    /// <summary>
+    /// Loads the prompt library and the context budget.
+    ///
+    /// A first run seeds the library with a few examples rather than an empty box.
+    /// Nobody writes a good prompt from a blank field; they read one and change it.
+    /// </summary>
+    private void LoadPromptsAndContext()
+    {
+        try
+        {
+            if (File.Exists(PromptsPath))
+            {
+                Prompts = PromptLibrary.Deserialise(File.ReadAllText(PromptsPath));
+            }
+            else
+            {
+                Prompts = PromptLibrary.Examples();
+                File.WriteAllText(PromptsPath, PromptLibrary.Serialise(Prompts));
+            }
+
+            ContextEngine = ContextEngine.Load(
+                File.Exists(ContextPath) ? File.ReadAllText(ContextPath) : null);
+        }
+        catch (IOException)
+        {
+            // Custom prompts are worth having and not worth failing to start over.
+            Prompts = PromptLibrary.Examples();
+        }
+    }
+
+    internal void SavePrompts(IReadOnlyList<SavedPrompt> prompts)
+    {
+        Prompts = PromptLibrary.Clean(prompts);
+        try
+        {
+            File.WriteAllText(PromptsPath, PromptLibrary.Serialise(Prompts));
+        }
+        catch (IOException)
+        {
+        }
+    }
+
+    private static bool ReadFlag(string? argumentsJson, string name)
+    {
+        if (string.IsNullOrWhiteSpace(argumentsJson)) return false;
+        try
+        {
+            using var document = System.Text.Json.JsonDocument.Parse(argumentsJson);
+            return document.RootElement.TryGetProperty(name, out var value)
+                && value.ValueKind == System.Text.Json.JsonValueKind.True;
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return false;
+        }
+    }
 }

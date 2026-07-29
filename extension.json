@@ -1,17 +1,20 @@
 {
   "id": "com.novalist.ai",
   "name": "AI Assistant",
-  "description": "AI-powered chat, story analysis, and scene statistics. Supports LM Studio and GitHub Copilot CLI providers.",
-  "version": "2.0.0",
+  "description": "AI chat with an explicit context picker, editorial critique left as margin comments, a story bible built from your own prose, outlining from a premise, your own prompt library, story analysis and scene statistics. Supports LM Studio and GitHub Copilot CLI.",
+  "version": "2.1.0",
   "author": "Novalist Team",
   "entryAssembly": "Novalist.Extensions.AiAssistant.dll",
-  "minHostVersion": "2.0.0",
+  "minHostVersion": "2.3.0",
   "maxHostVersion": "",
   "dependencies": [],
   "tags": [
     "ai",
     "analysis",
-    "chat"
+    "chat",
+    "critique",
+    "outline",
+    "prompts"
   ],
   "contributes": {
     "views": [

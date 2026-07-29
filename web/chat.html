@@ -31,11 +31,42 @@ button {
 }
 button.secondary { background: var(--card); color: var(--dim); border: 1px solid var(--border); }
 button:disabled { opacity: .5; cursor: default; }
+
+/* The picker. Deliberately a list of named things rather than a description of
+   a strategy: "the scene I am in" and "Mira Vance" are things somebody can
+   decide about, whereas "relevant context" is not. */
+#context {
+  max-height: 40vh; overflow-y: auto; padding: 8px 10px;
+  border-top: 1px solid var(--border); background: var(--card);
+  display: flex; flex-direction: column; gap: 2px;
+}
+.ctx-group {
+  font-size: 11px; text-transform: uppercase; letter-spacing: .06em;
+  color: var(--dim); margin: 8px 0 2px;
+}
+.ctx-group:first-child { margin-top: 0; }
+.ctx-item { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+.ctx-item:hover { color: var(--accent); }
+.badge {
+  display: inline-block; min-width: 1.4em; margin-left: 6px; padding: 0 4px;
+  border-radius: 999px; background: var(--accent); color: #fff;
+  font-size: 11px; text-align: center;
+}
+/* A notice is the panel telling the writer something rather than the model
+   saying it, so it does not look like a reply. */
+.msg.notice {
+  align-self: stretch; background: transparent; color: var(--dim);
+  font-size: 12px; font-style: italic; padding: 2px 0;
+}
 </style>
 </head>
 <body>
 <div id="messages"></div>
+<div id="context" hidden></div>
 <div id="composer">
+  <button id="contextToggle" class="secondary" aria-expanded="false"
+          data-i18n="context" title="Choose what the model is told">Context<span
+          id="contextCount" class="badge" hidden></span></button>
   <textarea id="input" rows="2" data-i18n-ph="placeholder" placeholder="Ask about your story..."></textarea>
   <button id="send" data-i18n="send">Send</button>
   <button id="cancel" class="secondary" data-i18n="stop" hidden>Stop</button>
@@ -62,6 +93,9 @@ function applyStrings(map) {
   }
 }
 const messagesEl = document.getElementById('messages');
+const contextEl = document.getElementById('context');
+const contextToggle = document.getElementById('contextToggle');
+const contextCount = document.getElementById('contextCount');
 const inputEl = document.getElementById('input');
 const sendBtn = document.getElementById('send');
 const cancelBtn = document.getElementById('cancel');
@@ -97,6 +131,10 @@ window.addEventListener('message', (event) => {
   } else if (msg.type === 'message') {
     if (streamEl) { streamEl.remove(); streamEl = null; }
     addMessage(msg.role, msg.text, msg.thinking);
+  } else if (msg.type === 'contextOptions') {
+    drawContext(msg.groups);
+  } else if (msg.type === 'notice') {
+    addMessage('notice', msg.text);
   } else if (msg.type === 'state') {
     sendBtn.disabled = msg.isGenerating;
     cancelBtn.hidden = !msg.isGenerating;
@@ -113,12 +151,58 @@ window.addEventListener('message', (event) => {
   }
 });
 
+function ticked() {
+  return Array.from(contextEl.querySelectorAll('input:checked')).map((b) => b.value);
+}
+
+function updateCount() {
+  const n = ticked().length;
+  contextCount.textContent = n ? String(n) : '';
+  contextCount.hidden = n === 0;
+}
+
+function drawContext(groups) {
+  contextEl.textContent = '';
+  if (!groups || !groups.length) {
+    contextEl.appendChild(document.createTextNode(''));
+    return;
+  }
+  for (const group of groups) {
+    const heading = document.createElement('div');
+    heading.className = 'ctx-group';
+    heading.textContent = group.title;
+    contextEl.appendChild(heading);
+
+    for (const item of group.items) {
+      const label = document.createElement('label');
+      label.className = 'ctx-item';
+      const box = document.createElement('input');
+      box.type = 'checkbox';
+      box.value = item.id;
+      box.addEventListener('change', updateCount);
+      label.appendChild(box);
+      label.appendChild(document.createTextNode(' ' + item.label));
+      contextEl.appendChild(label);
+    }
+  }
+  updateCount();
+}
+
 function send() {
   const text = inputEl.value.trim();
   if (!text) return;
   inputEl.value = '';
-  post({ type: 'send', text });
+  // What the writer ticked travels with the message. Nothing is inferred: what
+  // was sent is exactly what is shown as ticked.
+  post({ type: 'send', text, include: ticked() });
 }
+
+contextToggle.addEventListener('click', () => {
+  const showing = !contextEl.hidden;
+  contextEl.hidden = showing;
+  contextToggle.setAttribute('aria-expanded', String(!showing));
+  if (!showing && !contextEl.childElementCount) post({ type: 'contextOptions' });
+});
 
 sendBtn.addEventListener('click', send);
 cancelBtn.addEventListener('click', () => post({ type: 'cancel' }));

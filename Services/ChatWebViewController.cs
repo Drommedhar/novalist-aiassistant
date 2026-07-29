@@ -1,4 +1,8 @@
+using System;
+using System.Collections.Generic;
 using System.Collections.Specialized;
+using System.Linq;
+using System.Text;
 using System.ComponentModel;
 using System.Text.Json;
 using Novalist.Extensions.AiAssistant.ViewModels;
@@ -22,8 +26,13 @@ public sealed class ChatWebViewController : IWebViewController, IDisposable
 
     public event Action<string>? MessagePosted;
 
+    private readonly IHostServices _host;
+    private readonly AiAssistantExtension _extension;
+
     public ChatWebViewController(IHostServices host, AiAssistantExtension extension)
     {
+        _host = host;
+        _extension = extension;
         _vm = new AiChatViewModel(host, extension);
         _loc = host.GetLocalization(extension.Id);
         _vm.PropertyChanged += OnVmPropertyChanged;
@@ -37,9 +46,28 @@ public sealed class ChatWebViewController : IWebViewController, IDisposable
         switch (type)
         {
             case "send":
-                _vm.UserInput = document.RootElement.GetProperty("text").GetString() ?? string.Empty;
+            {
+                var text = document.RootElement.GetProperty("text").GetString() ?? string.Empty;
+
+                // Anything the writer ticked in the picker goes in front of what
+                // they typed. Guessing what a chat needs from the project is the
+                // thing this replaces: a picker means the writer can see exactly
+                // what was sent, and a wrong answer is theirs to fix rather than
+                // a mystery.
+                if (document.RootElement.TryGetProperty("include", out var include)
+                    && include.ValueKind == JsonValueKind.Array)
+                {
+                    var context = BuildContext(include);
+                    if (context.Length > 0) text = context + "\n\n" + text;
+                }
+
+                _vm.UserInput = text;
                 _vm.SendCommand.Execute(null);
                 return Task.FromResult<string?>(null);
+            }
+            case "contextOptions":
+                return Task.FromResult<string?>(JsonSerializer.Serialize(
+                    new { type = "contextOptions", groups = ContextOptions() }, Json));
             case "cancel":
                 _vm.CancelCommand.Execute(null);
                 return Task.FromResult<string?>(null);
@@ -66,6 +94,156 @@ public sealed class ChatWebViewController : IWebViewController, IDisposable
             default:
                 return Task.FromResult<string?>(null);
         }
+    }
+
+    /// <summary>
+    /// What the writer can choose to send.
+    ///
+    /// Named rather than described: "the scene I am in" and "Mira Vance" are
+    /// things somebody can decide about, whereas "relevant context" is not.
+    /// </summary>
+    private object[] ContextOptions()
+    {
+        var groups = new List<object>();
+
+        var current = _host.ProjectService.CurrentScene;
+        var sceneItems = new List<object>();
+        if (current != null)
+        {
+            sceneItems.Add(new { id = "scene:" + current.Id, label = current.Title });
+            sceneItems.Add(new { id = "chapter:" + current.ChapterGuid, label = current.ChapterTitle });
+        }
+        sceneItems.Add(new { id = "outline", label = _loc.T("ai.contextOutline") });
+        groups.Add(new { title = _loc.T("ai.contextWhereIAm"), items = sceneItems });
+
+        try
+        {
+            var characters = _host.EntityService.LoadCharactersAsync()
+                .GetAwaiter().GetResult()
+                .Where(c => !string.IsNullOrWhiteSpace(c.DisplayName))
+                .Select(c => new { id = "entity:" + c.Id, label = c.DisplayName })
+                .Cast<object>()
+                .ToList();
+            if (characters.Count > 0)
+                groups.Add(new { title = _loc.T("ai.contextCast"), items = characters });
+        }
+        catch (Exception)
+        {
+            // No project open, or a Codex that will not load. The scene options
+            // are still worth offering.
+        }
+
+        return [.. groups];
+    }
+
+    /// <summary>
+    /// Assembles what was ticked, through the context engine so the order and the
+    /// budget are the same here as everywhere else in the extension.
+    /// </summary>
+    private string BuildContext(JsonElement include)
+    {
+        var wanted = include.EnumerateArray()
+            .Where(e => e.ValueKind == JsonValueKind.String)
+            .Select(e => e.GetString()!)
+            .ToHashSet(StringComparer.Ordinal);
+        if (wanted.Count == 0) return string.Empty;
+
+        var blocks = new List<ContextBlock>();
+        var current = _host.ProjectService.CurrentScene;
+
+        if (current != null && wanted.Contains("scene:" + current.Id))
+        {
+            var prose = _host.ProjectService
+                .ReadSceneContentAsync(current.ChapterGuid, current.Id)
+                .GetAwaiter().GetResult();
+            blocks.Add(new ContextBlock(
+                ContextTier.Subject, _loc.T("ai.contextThisScene"), Strip(prose)));
+        }
+
+        if (current != null && wanted.Contains("chapter:" + current.ChapterGuid))
+        {
+            var builder = new StringBuilder();
+            foreach (var scene in _host.ProjectService.GetScenesForChapter(current.ChapterGuid))
+            {
+                if (scene.Id == current.Id) continue;
+                var prose = _host.ProjectService
+                    .ReadSceneContentAsync(current.ChapterGuid, scene.Id)
+                    .GetAwaiter().GetResult();
+                builder.Append(scene.Title).Append(":\n").AppendLine(Strip(prose)).AppendLine();
+            }
+            if (builder.Length > 0)
+                blocks.Add(new ContextBlock(
+                    ContextTier.Preceding, _loc.T("ai.contextThisChapter"), builder.ToString()));
+        }
+
+        if (wanted.Contains("outline"))
+        {
+            var builder = new StringBuilder();
+            foreach (var chapter in _host.ProjectService.GetChaptersOrdered())
+            {
+                builder.Append("- ").AppendLine(chapter.Title);
+                foreach (var scene in _host.ProjectService.GetScenesForChapter(chapter.Guid))
+                {
+                    var synopsis = _host.ProjectService
+                        .GetSceneSynopsisAsync(chapter.Guid, scene.Id)
+                        .GetAwaiter().GetResult();
+                    builder.Append("  - ").Append(scene.Title);
+                    if (!string.IsNullOrWhiteSpace(synopsis))
+                        builder.Append(": ").Append(synopsis);
+                    builder.AppendLine();
+                }
+            }
+            blocks.Add(new ContextBlock(
+                ContextTier.Background, _loc.T("ai.contextOutline"), builder.ToString()));
+        }
+
+        var entityIds = wanted
+            .Where(w => w.StartsWith("entity:", StringComparison.Ordinal))
+            .Select(w => w["entity:".Length..])
+            .ToHashSet(StringComparer.Ordinal);
+
+        if (entityIds.Count > 0)
+        {
+            foreach (var id in entityIds)
+            {
+                var detailed = _host.EntityService
+                    .GetCharacterDetailedAsync(id, current?.ChapterGuid, current?.Id)
+                    .GetAwaiter().GetResult();
+                if (detailed == null) continue;
+
+                var builder = new StringBuilder();
+                foreach (var section in detailed.Sections)
+                {
+                    if (string.IsNullOrWhiteSpace(section.Content)) continue;
+                    builder.Append(section.Title).Append(": ").AppendLine(Strip(section.Content));
+                }
+                blocks.Add(new ContextBlock(
+                    ContextTier.Entities, detailed.DisplayName, builder.ToString(), 100));
+            }
+        }
+
+        var assembled = _extension.ContextEngine.Assemble(blocks);
+
+        // What did not fit is said rather than silently dropped. A writer who
+        // ticked six characters and got four needs to know which.
+        if (assembled.Dropped.Count > 0)
+            MessagePosted?.Invoke(JsonSerializer.Serialize(new
+            {
+                type = "notice",
+                text = _loc.T("context.dropped").Replace("{0}", string.Join(", ", assembled.Dropped))
+            }, Json));
+
+        return assembled.Text;
+    }
+
+    private static string Strip(string html)
+    {
+        var withBreaks = System.Text.RegularExpressions.Regex.Replace(
+            html ?? string.Empty, @"</p\s*>|<br\s*/?>", "\n",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        var stripped = System.Text.RegularExpressions.Regex.Replace(
+            withBreaks, "<[^>]+>", string.Empty);
+        return System.Net.WebUtility.HtmlDecode(stripped).Trim();
     }
 
     private void OnVmPropertyChanged(object? sender, PropertyChangedEventArgs e)
