@@ -40,6 +40,66 @@ public class AiService : IAiService
         : IsCopilot ? _copilotClient.ModelId
         : _model;
 
+    /// <summary>
+    /// A model chosen for this request rather than in Settings, or empty to use
+    /// the configured one.
+    ///
+    /// The model lived in the settings form and nowhere else, so trying a
+    /// heavier model for one hard paragraph meant opening Settings, changing it,
+    /// generating, and changing it back - which nobody does, so nobody tries.
+    /// </summary>
+    public string ModelOverride { get; set; } = string.Empty;
+
+    /// <summary>The model this request will actually use.</summary>
+    public string EffectiveModel =>
+        string.IsNullOrWhiteSpace(ModelOverride) ? ModelName : ModelOverride.Trim();
+
+    /// <summary>The model id the local (OpenAI-shaped) endpoint is asked for.</summary>
+    private string LocalModel =>
+        string.IsNullOrWhiteSpace(ModelOverride) ? _model : ModelOverride.Trim();
+
+    /// <summary>
+    /// Pushes a per-request model choice onto whichever client will serve it.
+    ///
+    /// The CLI and Anthropic clients hold their model as state rather than
+    /// taking it per call, so the override has to be written before the request
+    /// and put back after - otherwise one experiment silently becomes the
+    /// default for the rest of the session.
+    /// </summary>
+    private IDisposable UseRequestModel()
+    {
+        if (string.IsNullOrWhiteSpace(ModelOverride)) return NullScope.Instance;
+        var wanted = ModelOverride.Trim();
+
+        if (IsAnthropic) return new ModelScope(_anthropicClient.ModelId, v => _anthropicClient.ModelId = v, wanted);
+        if (IsClaude) return new ModelScope(_claudeClient.ModelId, v => _claudeClient.ModelId = v, wanted);
+        if (IsCopilot) return new ModelScope(_copilotClient.ModelId, v => _copilotClient.ModelId = v, wanted);
+        // The local endpoint takes the model in the payload, so LocalModel has
+        // already dealt with it.
+        return NullScope.Instance;
+    }
+
+    private sealed class NullScope : IDisposable
+    {
+        public static readonly NullScope Instance = new();
+        public void Dispose() { }
+    }
+
+    private sealed class ModelScope : IDisposable
+    {
+        private readonly string _previous;
+        private readonly Action<string> _set;
+
+        public ModelScope(string previous, Action<string> set, string wanted)
+        {
+            _previous = previous;
+            _set = set;
+            set(wanted);
+        }
+
+        public void Dispose() => _set(_previous);
+    }
+
     private CancellationTokenSource? _cts;
 
     // Serialise model-load checks so concurrent GenerateChatAsync calls don't
@@ -64,6 +124,10 @@ public class AiService : IAiService
 
     public void Configure(AiSettings settings)
     {
+        // A model picked for one request does not outlive a settings change:
+        // the writer has just said what they want the default to be.
+        ModelOverride = string.Empty;
+
         // Invalidate the ensure-cache when relevant fields change so a fresh
         // probe runs on the next request.
         if (_provider != settings.Provider || _baseUrl != settings.LmStudioBaseUrl.TrimEnd('/')
@@ -245,10 +309,10 @@ public class AiService : IAiService
 
     public async Task EnsureModelLoadedAsync()
     {
-        if (string.IsNullOrEmpty(_model)) return;
+        if (string.IsNullOrEmpty(LocalModel)) return;
 
         // Fast path: already verified for this (model, contextLength) — no I/O.
-        if (_ensuredModel == _model && _ensuredContextLength == _contextLength)
+        if (_ensuredModel == LocalModel && _ensuredContextLength == _contextLength)
             return;
 
         await _ensureLock.WaitAsync().ConfigureAwait(false);
@@ -256,7 +320,7 @@ public class AiService : IAiService
         {
             // Re-check inside the lock; another caller may have just done the
             // load while we were waiting.
-            if (_ensuredModel == _model && _ensuredContextLength == _contextLength)
+            if (_ensuredModel == LocalModel && _ensuredContextLength == _contextLength)
                 return;
             using var req = new HttpRequestMessage(HttpMethod.Get, $"{_baseUrl}/api/v1/models");
             AddAuth(req);
@@ -271,7 +335,7 @@ public class AiService : IAiService
                 foreach (var m in arr.EnumerateArray())
                 {
                     var key = m.TryGetProperty("key", out var k) ? k.GetString() : null;
-                    if (key != _model) continue;
+                    if (key != LocalModel) continue;
                     if (m.TryGetProperty("loaded_instances", out var instances) && instances.GetArrayLength() > 0)
                     {
                         if (_contextLength <= 0)
@@ -295,7 +359,7 @@ public class AiService : IAiService
                                 // Unload existing instances first
                                 foreach (var inst in instances.EnumerateArray())
                                 {
-                                    var instId = inst.TryGetProperty("id", out var iid) ? iid.GetString() ?? _model : _model;
+                                    var instId = inst.TryGetProperty("id", out var iid) ? iid.GetString() ?? LocalModel : LocalModel;
                                     await UnloadInstanceAsync(instId).ConfigureAwait(false);
                                 }
                             }
@@ -308,7 +372,7 @@ public class AiService : IAiService
             if (needsLoad)
                 await LoadModelAsync().ConfigureAwait(false);
 
-            _ensuredModel = _model;
+            _ensuredModel = LocalModel;
             _ensuredContextLength = _contextLength;
         }
         catch
@@ -323,7 +387,7 @@ public class AiService : IAiService
 
     private async Task LoadModelAsync()
     {
-        var payload = new Dictionary<string, object> { ["model"] = _model };
+        var payload = new Dictionary<string, object> { ["model"] = LocalModel };
         if (_contextLength > 0)
             payload["context_length"] = _contextLength;
 
@@ -352,6 +416,11 @@ public class AiService : IAiService
         Action<string>? onThinkingChunk = null,
         CancellationToken cancellationToken = default)
     {
+        // A model picked for this request, put back afterwards: the CLI and
+        // Anthropic clients hold theirs as state, so without this one
+        // experiment would silently become the session's default.
+        using var requestModel = UseRequestModel();
+
         if (IsCopilot)
             return await GenerateChatCopilotAsync(messages, onChunk, onThinkingChunk, cancellationToken);
         if (IsClaude)
@@ -366,7 +435,7 @@ public class AiService : IAiService
 
         var body = new Dictionary<string, object>
         {
-            ["model"] = _model,
+            ["model"] = LocalModel,
             ["messages"] = messages.Select(BuildMessagePayload).ToArray(),
             ["stream"] = true,
             ["temperature"] = temperature ?? _temperature,

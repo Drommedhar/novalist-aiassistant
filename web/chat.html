@@ -89,6 +89,7 @@ button:disabled { opacity: .5; cursor: default; }
           data-i18n="context" title="Choose what the model is told">Context<span
           id="contextCount" class="badge" hidden></span></button>
   <textarea id="input" rows="2" data-i18n-ph="placeholder" placeholder="Ask about your story..."></textarea>
+  <select id="model" class="secondary" title="Which model answers this"></select>
   <button id="preview" class="secondary" data-i18n="previewTitle"
           title="See exactly what will be sent">Preview</button>
   <button id="send" data-i18n="send">Send</button>
@@ -116,6 +117,7 @@ function applyStrings(map) {
   }
 }
 const messagesEl = document.getElementById('messages');
+const modelSelect = document.getElementById('model');
 const previewPanel = document.getElementById('previewPanel');
 const previewBtn = document.getElementById('preview');
 const contextEl = document.getElementById('context');
@@ -160,6 +162,8 @@ window.addEventListener('message', (event) => {
     drawContext(msg.groups);
   } else if (msg.type === 'preview') {
     drawPreview(msg);
+  } else if (msg.type === 'models') {
+    drawModels(msg);
   } else if (msg.type === 'notice') {
     addMessage('notice', msg.text);
   } else if (msg.type === 'state') {
@@ -177,6 +181,28 @@ window.addEventListener('message', (event) => {
     if (!msg.isGenerating && streamEl) { streamEl.remove(); streamEl = null; }
   }
 });
+
+/**
+ * The models this provider can serve, so a heavier one can be tried for a
+ * single hard paragraph without a trip to Settings and back.
+ */
+function drawModels(p) {
+  const models = p.models || [];
+  if (models.length === 0) {
+    modelSelect.hidden = true;
+    return;
+  }
+  const esc = (v) => String(v ?? '').replace(/[&<>"]/g, (c) =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  // The empty option is the configured default, which is where a session
+  // starts and where it goes back to when Settings changes.
+  modelSelect.innerHTML =
+    '<option value="">' + esc(t('modelFromSettings')) + '</option>' +
+    models.map((m) => '<option value="' + esc(m.id) + '">' + esc(m.label || m.id) +
+      '</option>').join('');
+  modelSelect.value = p.current || '';
+  modelSelect.hidden = false;
+}
 
 /**
  * What would be sent, block by block, before a token is spent on it.
@@ -218,6 +244,8 @@ function drawPreview(p) {
 function ticked() {
   return Array.from(contextEl.querySelectorAll('input:checked')).map((b) => b.value);
 }
+
+modelSelect.onchange = () => post({ type: 'setModel', model: modelSelect.value });
 
 previewBtn.onclick = () => {
   // A second press closes it: the preview is a thing to glance at, not a mode.
@@ -285,6 +313,7 @@ inputEl.addEventListener('keydown', (e) => {
 });
 
 post({ type: 'hydrate' });
+post({ type: 'models' });
 </script>
 </body>
 </html>

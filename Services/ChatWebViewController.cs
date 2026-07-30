@@ -98,6 +98,34 @@ public sealed class ChatWebViewController : IWebViewController, IDisposable
                     }
                 }, Json));
             }
+            case "models":
+            {
+                // The model lived in the settings form and nowhere else, so
+                // trying a heavier one for a single hard paragraph meant a trip
+                // to Settings and back - which nobody does, so nobody tries.
+                var models = _extension.AiService.ListModelsAsync()
+                    .GetAwaiter().GetResult();
+                return Task.FromResult<string?>(JsonSerializer.Serialize(new
+                {
+                    type = "models",
+                    models = models.Select(m => new { id = m.Key, label = m.DisplayName }),
+                    current = _extension.AiService.ModelOverride,
+                    strings = new Dictionary<string, string>
+                    {
+                        ["modelLabel"] = _loc.T("ai.modelLabel"),
+                        ["modelFromSettings"] = _loc.T("ai.modelFromSettings")
+                    }
+                }, Json));
+            }
+            case "setModel":
+            {
+                _extension.AiService.ModelOverride =
+                    document.RootElement.TryGetProperty("model", out var chosen)
+                    && chosen.ValueKind == JsonValueKind.String
+                        ? chosen.GetString() ?? string.Empty
+                        : string.Empty;
+                return Task.FromResult<string?>(null);
+            }
             case "contextOptions":
                 return Task.FromResult<string?>(JsonSerializer.Serialize(
                     new { type = "contextOptions", groups = ContextOptions() }, Json));

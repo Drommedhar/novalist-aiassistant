@@ -61,7 +61,9 @@
     "previewDropped": "passte nicht",
     "previewTotal": "Geschätzt insgesamt:",
     "previewEmpty": "Nichts ausgewählt - gesendet würde nur, was du tippst.",
-    "previewClose": "Schließen"
+    "previewClose": "Schließen",
+    "modelLabel": "Modell",
+    "modelFromSettings": "Modell aus den Einstellungen"
   },
   "article": {
     "emptyResult": "Das Modell lieferte eine leere Zusammenfassung.",

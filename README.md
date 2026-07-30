@@ -80,6 +80,8 @@ When there is not room, the least important thing is dropped rather than whateve
 
 **Preview** in the chat shows exactly what would be sent, before a token is spent on it: every block that would go, what kind it is, roughly how many tokens it costs, and whether it fitted — with the assembled prompt itself underneath. The prompt used to be built and sent in one step and nothing showed what went, so ticking six characters and getting an answer that ignored two had no explanation.
 
+**Model** beside it picks which model answers *this* request. The model lived in the settings form and nowhere else, so trying a heavier one for a single hard paragraph meant opening Settings, changing it, generating, and changing it back — which nobody does, so nobody tries. The choice lasts for the session and is dropped the moment you change the model in Settings, since that is you saying what the default should be.
+
 Token figures are estimates. They come from the same four-characters-per-token rule the budget is enforced with, which is wrong for any particular string and close enough to decide what to drop; they are not a billing figure.
 
 ### Story Analysis

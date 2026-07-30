@@ -61,7 +61,9 @@
     "previewDropped": "did not fit",
     "previewTotal": "Estimated total:",
     "previewEmpty": "Nothing is ticked, so only what you type would be sent.",
-    "previewClose": "Close"
+    "previewClose": "Close",
+    "modelLabel": "Model",
+    "modelFromSettings": "Model from Settings"
   },
   "article": {
     "emptyResult": "The model returned an empty summary.",
