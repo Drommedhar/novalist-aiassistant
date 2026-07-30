@@ -65,6 +65,39 @@ public sealed class ChatWebViewController : IWebViewController, IDisposable
                 _vm.SendCommand.Execute(null);
                 return Task.FromResult<string?>(null);
             }
+            case "preview":
+            {
+                // Exactly what "send" would assemble, before a token is spent
+                // on it. The prompt was built and sent in one step and nothing
+                // showed what went, so a writer who ticked six characters and
+                // got an answer that ignored two could not find out why.
+                var blocks = document.RootElement.TryGetProperty("include", out var picked)
+                             && picked.ValueKind == JsonValueKind.Array
+                    ? ContextBlocks(picked)
+                    : [];
+                var preview = _extension.ContextEngine.Preview(blocks);
+                return Task.FromResult<string?>(JsonSerializer.Serialize(new
+                {
+                    type = "preview",
+                    text = preview.Text,
+                    estimatedTokens = preview.EstimatedTokens,
+                    tokenBudget = preview.TokenBudget,
+                    lines = preview.Lines,
+                    strings = new Dictionary<string, string>
+                    {
+                        ["previewTitle"] = _loc.T("ai.previewTitle"),
+                        ["previewHint"] = _loc.T("ai.previewHint"),
+                        ["previewBlock"] = _loc.T("ai.previewBlock"),
+                        ["previewTier"] = _loc.T("ai.previewTier"),
+                        ["previewTokens"] = _loc.T("ai.previewTokens"),
+                        ["previewKept"] = _loc.T("ai.previewKept"),
+                        ["previewDropped"] = _loc.T("ai.previewDropped"),
+                        ["previewTotal"] = _loc.T("ai.previewTotal"),
+                        ["previewEmpty"] = _loc.T("ai.previewEmpty"),
+                        ["previewClose"] = _loc.T("ai.previewClose")
+                    }
+                }, Json));
+            }
             case "contextOptions":
                 return Task.FromResult<string?>(JsonSerializer.Serialize(
                     new { type = "contextOptions", groups = ContextOptions() }, Json));
@@ -140,15 +173,38 @@ public sealed class ChatWebViewController : IWebViewController, IDisposable
     /// Assembles what was ticked, through the context engine so the order and the
     /// budget are the same here as everywhere else in the extension.
     /// </summary>
+    /// <summary>
+    /// The assembled context, as a string, for the send path.
+    ///
+    /// Shares its blocks with the preview: a preview that showed something
+    /// other than what is sent would be worse than no preview at all.
+    /// </summary>
     private string BuildContext(JsonElement include)
+    {
+        var assembled = _extension.ContextEngine.Assemble(ContextBlocks(include));
+
+        // What did not fit is said rather than silently dropped. A writer who
+        // ticked six characters and got four needs to know which.
+        if (assembled.Dropped.Count > 0)
+            MessagePosted?.Invoke(JsonSerializer.Serialize(new
+            {
+                type = "notice",
+                text = _loc.T("context.dropped").Replace("{0}", string.Join(", ", assembled.Dropped))
+            }, Json));
+
+        return assembled.Text;
+    }
+
+    private List<ContextBlock> ContextBlocks(JsonElement include)
     {
         var wanted = include.EnumerateArray()
             .Where(e => e.ValueKind == JsonValueKind.String)
             .Select(e => e.GetString()!)
             .ToHashSet(StringComparer.Ordinal);
-        if (wanted.Count == 0) return string.Empty;
 
         var blocks = new List<ContextBlock>();
+        if (wanted.Count == 0) return blocks;
+
         var current = _host.ProjectService.CurrentScene;
 
         if (current != null && wanted.Contains("scene:" + current.Id))
@@ -222,18 +278,7 @@ public sealed class ChatWebViewController : IWebViewController, IDisposable
             }
         }
 
-        var assembled = _extension.ContextEngine.Assemble(blocks);
-
-        // What did not fit is said rather than silently dropped. A writer who
-        // ticked six characters and got four needs to know which.
-        if (assembled.Dropped.Count > 0)
-            MessagePosted?.Invoke(JsonSerializer.Serialize(new
-            {
-                type = "notice",
-                text = _loc.T("context.dropped").Replace("{0}", string.Join(", ", assembled.Dropped))
-            }, Json));
-
-        return assembled.Text;
+        return blocks;
     }
 
     private static string Strip(string html)

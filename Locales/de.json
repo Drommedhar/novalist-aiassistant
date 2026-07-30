@@ -51,7 +51,17 @@
     "stopping": "Wird gestoppt...",
     "thinking": "Denkt",
     "thinkingDots": "Denkt...",
-    "topP": "Top P"
+    "topP": "Top P",
+    "previewTitle": "Vorschau",
+    "previewHint": "Genau das, was gesendet würde, in dieser Reihenfolge. Noch wurde nichts verbraucht.",
+    "previewBlock": "Block",
+    "previewTier": "Art",
+    "previewTokens": "Tokens",
+    "previewKept": "enthalten",
+    "previewDropped": "passte nicht",
+    "previewTotal": "Geschätzt insgesamt:",
+    "previewEmpty": "Nichts ausgewählt - gesendet würde nur, was du tippst.",
+    "previewClose": "Schließen"
   },
   "article": {
     "emptyResult": "Das Modell lieferte eine leere Zusammenfassung.",

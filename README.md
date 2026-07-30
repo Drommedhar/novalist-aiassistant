@@ -78,6 +78,10 @@ One place decides what goes into a request, in what order, and what gets cut whe
 
 When there is not room, the least important thing is dropped rather than whatever happened to be at the bottom, and you are told what went. The budget is set in **Settings → AI / LLM**.
 
+**Preview** in the chat shows exactly what would be sent, before a token is spent on it: every block that would go, what kind it is, roughly how many tokens it costs, and whether it fitted — with the assembled prompt itself underneath. The prompt used to be built and sent in one step and nothing showed what went, so ticking six characters and getting an answer that ignored two had no explanation.
+
+Token figures are estimates. They come from the same four-characters-per-token rule the budget is enforced with, which is wrong for any particular string and close enough to decide what to drop; they are not a billing figure.
+
 ### Story Analysis
 
 A full content view that lets you run AI-powered analysis on a chapter or your entire story. Select a chapter, hit **Analyse Chapter** (or **Analyse Whole Story**), and the AI processes each scene individually. The results include:

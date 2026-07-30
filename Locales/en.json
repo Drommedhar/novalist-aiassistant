@@ -51,7 +51,17 @@
     "stopping": "Stopping...",
     "thinking": "Thinking",
     "thinkingDots": "Thinking...",
-    "topP": "Top P"
+    "topP": "Top P",
+    "previewTitle": "Preview",
+    "previewHint": "Exactly what would be sent, in the order it would be sent. Nothing has been spent yet.",
+    "previewBlock": "Block",
+    "previewTier": "Kind",
+    "previewTokens": "Tokens",
+    "previewKept": "included",
+    "previewDropped": "did not fit",
+    "previewTotal": "Estimated total:",
+    "previewEmpty": "Nothing is ticked, so only what you type would be sent.",
+    "previewClose": "Close"
   },
   "article": {
     "emptyResult": "The model returned an empty summary.",

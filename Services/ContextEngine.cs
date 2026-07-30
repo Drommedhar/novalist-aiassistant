@@ -35,6 +35,24 @@ public sealed record ContextBlock(ContextTier Tier, string Heading, string Body,
 public sealed record AssembledContext(
     string Text, int EstimatedTokens, IReadOnlyList<string> Dropped);
 
+/// <summary>One line of the prompt preview: a block, its size, and its fate.</summary>
+public sealed record ContextLine(
+    string Tier, string Heading, int Characters, int EstimatedTokens, bool Kept);
+
+/// <summary>
+/// What would be sent, before a token is spent on it.
+///
+/// The prompt was built and sent in one step and no view showed what went, so
+/// a writer who ticked six characters and got an answer that ignored two had no
+/// way to find out why. The breakdown says which blocks made it, how big each
+/// one is, and what the budget was.
+/// </summary>
+public sealed record ContextPreview(
+    string Text,
+    int EstimatedTokens,
+    int TokenBudget,
+    IReadOnlyList<ContextLine> Lines);
+
 /// <summary>
 /// Decides what a model is told, in what order, and what gets cut when there is
 /// not room.
@@ -124,6 +142,40 @@ public sealed class ContextEngine
         var assembled = text.ToString().TrimEnd();
         return new AssembledContext(
             assembled, (int)Math.Ceiling(assembled.Length / CharactersPerToken), dropped);
+    }
+
+    /// <summary>
+    /// The same assembly, with a line per block saying what it cost and whether
+    /// it survived.
+    ///
+    /// Built by assembling twice rather than by threading a report out of
+    /// <see cref="Assemble"/>: the preview must show exactly what the send path
+    /// produces, and the surest way to guarantee that is to call it.
+    /// </summary>
+    public ContextPreview Preview(IEnumerable<ContextBlock> blocks)
+    {
+        var all = blocks
+            .Where(b => !string.IsNullOrWhiteSpace(b.Body))
+            .OrderBy(b => (int)b.Tier)
+            .ThenByDescending(b => b.Weight)
+            .ToList();
+
+        var assembled = Assemble(all);
+        var dropped = assembled.Dropped.ToHashSet(StringComparer.Ordinal);
+
+        var lines = all
+            .Select(b => new ContextLine(
+                b.Tier.ToString(),
+                b.Heading,
+                b.Body.Trim().Length,
+                (int)Math.Ceiling(b.Body.Trim().Length / CharactersPerToken),
+                // A heading is what identifies a block to the writer and to the
+                // drop report alike, so that is what the two are matched on.
+                !dropped.Contains(b.Heading)))
+            .ToList();
+
+        return new ContextPreview(
+            assembled.Text, assembled.EstimatedTokens, TokenBudget, lines);
     }
 
     /// <summary>
