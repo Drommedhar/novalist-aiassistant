@@ -382,5 +382,20 @@
   "style.failed": "The model did not return a description.",
   "style.saveFailed": "The voice profile could not be saved.",
   "style.defaultName": "My voice",
-  "style.commandDescription": "Reads a spread of what you have written and describes how you write, so everything the assistant writes sounds like the rest of the book."
+  "style.commandDescription": "Reads a spread of what you have written and describes how you write, so everything the assistant writes sounds like the rest of the book.",
+  "report.command": "Report on the whole book",
+  "report.description": "One developmental report with the same headings every time - plot, characters, pacing, conflict, theme, continuity, and what to fix first. Filed on the research shelf.",
+  "report.title": "Developmental report",
+  "report.done": "Report filed on the research shelf, {0} section(s) written.",
+  "report.tooLittle": "There is not enough of the book written yet to report on it.",
+  "report.failed": "The model returned nothing for any section.",
+  "report.sectionEmpty": "Nothing to report here.",
+  "report.section.premise": "What this book is",
+  "report.section.plot": "Plot",
+  "report.section.characters": "Characters",
+  "report.section.pacing": "Pacing",
+  "report.section.conflict": "Conflict",
+  "report.section.theme": "Theme",
+  "report.section.continuity": "Continuity",
+  "report.section.revision": "What to fix first"
 }

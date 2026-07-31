@@ -45,6 +45,7 @@ public sealed class AiAssistantExtension : IExtension, IStatusBarContributor, IR
     private InlineRewriteService? _inlineRewriteService;
     private CritiqueService? _critiqueService;
     private StyleProfileService? _styleProfiles;
+    private DevelopmentalReportService? _report;
     private StoryBibleService? _storyBibleService;
     private OutlineService? _outlineService;
     internal ContextEngine ContextEngine { get; private set; } = new();
@@ -148,6 +149,7 @@ public sealed class AiAssistantExtension : IExtension, IStatusBarContributor, IR
         host.RegisterInlineActionContributor(_inlineRewriteService);
 
         _critiqueService = new CritiqueService(AiService, host, _loc);
+        _report = new DevelopmentalReportService(AiService, host, _loc);
         _styleProfiles = new StyleProfileService(
             AiService, host, _loc, Path.Combine(host.GetExtensionSettingsPath(Id), "styles.json"));
         // Everything that writes prose goes through the inline service's system
@@ -558,6 +560,29 @@ public sealed class AiAssistantExtension : IExtension, IStatusBarContributor, IR
     /// Long enough to want reporting - it is one model call over a sample
     /// gathered from across the book, not a settings toggle.
     /// </summary>
+    /// <summary>
+    /// One report on the whole book, filed on the research shelf. Long enough to
+    /// want reporting: it is a model call per section over the whole thing.
+    /// </summary>
+    private async Task BuildReportAsync()
+    {
+        if (_report == null) return;
+
+        using var progress = _host.ShowBusyProgress(new BusyProgressOptions
+        {
+            Title = _loc.T("report.command"),
+            IsIndeterminate = true,
+            AllowCancel = true,
+        });
+        var built = await _report.BuildAsync(
+            new Progress<string>(where => progress.SetStatus(where)),
+            progress.CancellationToken);
+        progress.Dispose();
+
+        _host.ShowNotification(built.Error
+            ?? _loc.T("report.done").Replace("{0}", built.Sections.ToString()));
+    }
+
     private async Task BuildStyleProfileAsync()
     {
         if (_styleProfiles == null) return;
@@ -913,6 +938,7 @@ public sealed class AiAssistantExtension : IExtension, IStatusBarContributor, IR
         "com.novalist.ai.bible",
         "com.novalist.ai.outline",
         "com.novalist.ai.style",
+        "com.novalist.ai.report",
     ];
 
     /// <summary>
@@ -980,6 +1006,16 @@ public sealed class AiAssistantExtension : IExtension, IStatusBarContributor, IR
                 argumentsJson => CritiqueOpenSceneAsync(
                     ReadFlag(argumentsJson, "proposeEdits"), key));
         }
+
+        _host.RegisterCommand(
+            new HostCommandInfo
+            {
+                Id = AiCommandIds[5],
+                Title = _loc.T("report.command"),
+                Description = _loc.T("report.description"),
+                Mutates = true,
+            },
+            _ => BuildReportAsync());
 
         _host.RegisterCommand(
             new HostCommandInfo

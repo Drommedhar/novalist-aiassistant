@@ -382,5 +382,20 @@
   "style.failed": "Das Modell hat keine Beschreibung geliefert.",
   "style.saveFailed": "Das Stimmprofil konnte nicht gespeichert werden.",
   "style.defaultName": "Meine Stimme",
-  "style.commandDescription": "Liest quer durch deinen Text und beschreibt, wie du schreibst, damit alles, was der Assistent schreibt, zum Rest des Buches passt."
+  "style.commandDescription": "Liest quer durch deinen Text und beschreibt, wie du schreibst, damit alles, was der Assistent schreibt, zum Rest des Buches passt.",
+  "report.command": "Bericht über das ganze Buch",
+  "report.description": "Ein Lektoratsbericht mit immer denselben Überschriften - Handlung, Figuren, Tempo, Konflikt, Thema, Kontinuität und was zuerst zu ändern ist. Wird in der Recherche abgelegt.",
+  "report.title": "Lektoratsbericht",
+  "report.done": "Bericht in der Recherche abgelegt, {0} Abschnitt(e) geschrieben.",
+  "report.tooLittle": "Es ist noch zu wenig vom Buch geschrieben, um darüber zu berichten.",
+  "report.failed": "Das Modell hat zu keinem Abschnitt etwas geliefert.",
+  "report.sectionEmpty": "Hier gibt es nichts zu berichten.",
+  "report.section.premise": "Worum es in diesem Buch geht",
+  "report.section.plot": "Handlung",
+  "report.section.characters": "Figuren",
+  "report.section.pacing": "Tempo",
+  "report.section.conflict": "Konflikt",
+  "report.section.theme": "Thema",
+  "report.section.continuity": "Kontinuität",
+  "report.section.revision": "Was zuerst zu ändern ist"
 }

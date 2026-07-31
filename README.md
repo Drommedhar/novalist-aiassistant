@@ -64,6 +64,16 @@ It writes **no prose**. What you get is a binder full of titled empty scenes wit
 
 Anything that replaces prose you already wrote arrives as a **suggested edit** rather than an overwrite. Generated text is wrong a fair amount of the time, and undo is a poor way to find that out.
 
+### A report on the whole book, with the same headings every time
+
+Story Analysis works scene by scene and returns free-form findings. A writer finishing a draft wants the other thing: does the plot hold, do the arcs land, where does it sag, what would I fix first — as one document, read away from the screen and still there next month.
+
+**Report on the whole book** writes eight fixed sections: what the book is, plot, characters, pacing, conflict, theme, continuity, and what to fix first. The headings are fixed on purpose. A report whose shape changes between runs cannot be compared with the last one, and comparing is most of what a second draft is for.
+
+It reads the book at synopsis altitude — chapters, scenes and their synopses — because structure is not a question you answer from sentences, and a novel does not fit in a prompt. One model call per section, so it reports as it goes, can be stopped, and a section that comes back badly does not spoil the seven that did not. A section with nothing to say says so rather than vanishing.
+
+The finished report is filed on your **research shelf** as a note: versioned, searchable and exportable like anything else you keep there, with no new place to go looking for it.
+
 ### One section of a Codex entry at a time
 
 The Wiki summary is regenerated whole or not at all, which is the wrong unit for how an entry actually gets filled in — the history is fine and the appearance needs another attempt.
