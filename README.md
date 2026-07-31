@@ -64,6 +64,16 @@ It writes **no prose**. What you get is a binder full of titled empty scenes wit
 
 Anything that replaces prose you already wrote arrives as a **suggested edit** rather than an overwrite. Generated text is wrong a fair amount of the time, and undo is a poor way to find that out.
 
+### One section of a Codex entry at a time
+
+The Wiki summary is regenerated whole or not at all, which is the wrong unit for how an entry actually gets filled in — the history is fine and the appearance needs another attempt.
+
+Press the button on a section head in the Codex and this writes that section alone, from the same dossier the summary uses, with the section's own title as the instruction. Titles are the writer's words and the clearest statement of what belongs underneath, so "How they speak" gets an answer about how they speak, not a précis of the whole entry.
+
+Press it again and the extension is told what the section says and that you did not want it, and asked for a genuinely different angle. A re-roll that cannot see what it is replacing hands back the same paragraph with the clauses in a different order.
+
+Where the dossier is silent, so is the answer. An invented fact in a reference entry is worse than a short one, because it gets read later as something you decided.
+
 ### Your voice, described from your own prose
 
 Every prompt used to say "match the existing voice", which asks the model to infer a style from the paragraph it happens to be holding. That works for rewriting a distinctive passage and fails everywhere it matters — continuing from a line of dialogue, describing a room, writing towards a beat. What comes back is competent house style, and you edit your own voice back into it every time.
