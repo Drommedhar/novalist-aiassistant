@@ -372,5 +372,15 @@
       "clear": "Verwerfen und neu durchlaufen",
       "clearDesc": "Verwirft die alten Einträge. Das Figurenwissen bleibt leer, bis du den Scan erneut startest."
     }
-  }
+  },
+  "settings.styleSection": "Deine Stimme",
+  "settings.styleProfile": "In dieser Stimme schreiben",
+  "settings.styleNone": "Kein Profil - aus der Passage ableiten",
+  "settings.styleBuild": "Profil aus meinem Text erstellen",
+  "style.built": "Stimmprofil aus {0} Wörtern deines Textes erstellt.",
+  "style.tooLittle": "In diesem Buch steht noch zu wenig Text, um eine Stimme zu beschreiben.",
+  "style.failed": "Das Modell hat keine Beschreibung geliefert.",
+  "style.saveFailed": "Das Stimmprofil konnte nicht gespeichert werden.",
+  "style.defaultName": "Meine Stimme",
+  "style.commandDescription": "Liest quer durch deinen Text und beschreibt, wie du schreibst, damit alles, was der Assistent schreibt, zum Rest des Buches passt."
 }

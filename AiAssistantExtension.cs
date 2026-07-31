@@ -44,6 +44,7 @@ public sealed class AiAssistantExtension : IExtension, IStatusBarContributor, IR
     private KnowledgeBuilder? _knowledgeBuilder;
     private InlineRewriteService? _inlineRewriteService;
     private CritiqueService? _critiqueService;
+    private StyleProfileService? _styleProfiles;
     private StoryBibleService? _storyBibleService;
     private OutlineService? _outlineService;
     internal ContextEngine ContextEngine { get; private set; } = new();
@@ -147,6 +148,11 @@ public sealed class AiAssistantExtension : IExtension, IStatusBarContributor, IR
         host.RegisterInlineActionContributor(_inlineRewriteService);
 
         _critiqueService = new CritiqueService(AiService, host, _loc);
+        _styleProfiles = new StyleProfileService(
+            AiService, host, _loc, Path.Combine(host.GetExtensionSettingsPath(Id), "styles.json"));
+        // Everything that writes prose goes through the inline service's system
+        // prompts, so the voice is applied in exactly one place.
+        _inlineRewriteService.StyleProfiles = _styleProfiles;
         _storyBibleService = new StoryBibleService(AiService, host, _loc);
         _outlineService = new OutlineService(AiService, host, _loc);
         LoadPromptsAndContext();
@@ -540,12 +546,54 @@ public sealed class AiAssistantExtension : IExtension, IStatusBarContributor, IR
     // The AiSettings fields are exposed as a declarative schema the host
     // renders as a form. Values round-trip through the same "ai" host-data key.
 
+    /// <summary>The names as the picker shows them.</summary>
+    private IReadOnlyList<string> StyleNames
+        => _styleProfiles?.Profiles.Select(p => p.Name).ToList() ?? [];
+
+    private string ActiveStyleName
+        => _styleProfiles?.Active?.Name ?? _loc.T("settings.styleNone");
+
+    /// <summary>
+    /// Reads the writer's own prose and derives a description of how they write.
+    /// Long enough to want reporting - it is one model call over a sample
+    /// gathered from across the book, not a settings toggle.
+    /// </summary>
+    private async Task BuildStyleProfileAsync()
+    {
+        if (_styleProfiles == null) return;
+
+        using var progress = _host.ShowBusyProgress(new BusyProgressOptions
+        {
+            Title = _loc.T("settings.styleBuild"),
+            IsIndeterminate = true,
+            AllowCancel = true,
+        });
+        // Named for the book it was read from, so a writer with two voices can
+        // tell which is which.
+        var books = _host.ProjectService.GetBooks();
+        var name = books.FirstOrDefault(b => b.Id == _host.ProjectService.ActiveBookId)?.Name
+            ?? string.Empty;
+
+        var built = await _styleProfiles.BuildAsync(
+            name,
+            new Progress<string>(where => progress.SetStatus(where)),
+            progress.CancellationToken);
+        progress.Dispose();
+
+        if (built != null)
+        {
+            _host.ShowNotification(_loc.T("style.built")
+                .Replace("{0}", built.SampledWords.ToString()));
+        }
+    }
+
     public SettingsSchema GetSettingsSchema()
     {
         var providerGroup = _loc.T("settings.aiConnection");
         var paramsGroup = _loc.T("settings.aiParameters");
         var checksGroup = _loc.T("settings.aiAnalysisChecks");
         var knowledgeGroup = _loc.T("settings.knowledgeSection");
+        var styleGroup = _loc.T("settings.styleSection");
         return new SettingsSchema
         {
             Title = _loc.T("settings.ai"),
@@ -581,6 +629,9 @@ public sealed class AiAssistantExtension : IExtension, IStatusBarContributor, IR
                 Bool("enableCharacterKnowledge", _loc.T("settings.knowledgeEnable"), Settings.EnableCharacterKnowledge, knowledgeGroup, _loc.T("settings.knowledgeDesc")),
                 Number("maxParallelPrompts", _loc.T("settings.knowledgeMaxParallel"), Settings.MaxParallelPrompts, 1, 32, knowledgeGroup),
                 Bool("backgroundSceneAnalysis", _loc.T("settings.backgroundAnalysis"), Settings.BackgroundSceneAnalysis, knowledgeGroup, _loc.T("settings.backgroundAnalysisDesc")),
+                Select("styleProfile", _loc.T("settings.styleProfile"), ActiveStyleName,
+                    [_loc.T("settings.styleNone"), .. StyleNames], styleGroup),
+                Action("buildStyleProfile", _loc.T("settings.styleBuild"), styleGroup, null, []),
                 Text("responseLanguage", _loc.T("settings.aiResponseLanguage"), Settings.ResponseLanguage, paramsGroup),
                 Multiline("systemPrompt", _loc.T("settings.aiSystemPrompt"), Settings.SystemPrompt, paramsGroup, _loc.T("settings.aiSystemPromptDesc")),
             ]
@@ -634,12 +685,26 @@ public sealed class AiAssistantExtension : IExtension, IStatusBarContributor, IR
         Settings.ResponseLanguage = ReadStr("responseLanguage", Settings.ResponseLanguage);
         Settings.SystemPrompt = ReadStr("systemPrompt", Settings.SystemPrompt);
 
+        // The picker carries a name, because that is what it shows. An unknown
+        // name - "none", or a profile deleted since the form was drawn - clears
+        // the choice rather than leaving a voice the writer thinks is off.
+        if (values.TryGetValue("styleProfile", out var styleName) && _styleProfiles != null)
+        {
+            _styleProfiles.SetActive(_styleProfiles.Profiles
+                .FirstOrDefault(p => p.Name == styleName)?.Id);
+        }
+
         SaveSettings();
         return Task.CompletedTask;
     }
 
     public async Task<SettingsSchema?> ExecuteSchemaActionAsync(string actionKey, IReadOnlyDictionary<string, string> values)
     {
+        if (actionKey == "buildStyleProfile")
+        {
+            await BuildStyleProfileAsync();
+            return GetSettingsSchema();
+        }
         if (actionKey != "refreshModels") return null;
 
         // Reflect the form's (possibly unsaved) connection settings so the model
@@ -847,6 +912,7 @@ public sealed class AiAssistantExtension : IExtension, IStatusBarContributor, IR
         "com.novalist.ai.critique.book",
         "com.novalist.ai.bible",
         "com.novalist.ai.outline",
+        "com.novalist.ai.style",
     ];
 
     /// <summary>
@@ -914,6 +980,16 @@ public sealed class AiAssistantExtension : IExtension, IStatusBarContributor, IR
                 argumentsJson => CritiqueOpenSceneAsync(
                     ReadFlag(argumentsJson, "proposeEdits"), key));
         }
+
+        _host.RegisterCommand(
+            new HostCommandInfo
+            {
+                Id = AiCommandIds[4],
+                Title = _loc.T("settings.styleBuild"),
+                Description = _loc.T("style.commandDescription"),
+                Mutates = false,
+            },
+            _ => BuildStyleProfileAsync());
 
         _host.RegisterCommand(
             new HostCommandInfo

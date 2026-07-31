@@ -20,6 +20,14 @@ public sealed class InlineRewriteService : IInlineActionContributor
     private readonly IHostServices _host;
     private readonly Func<IReadOnlyList<SavedPrompt>> _prompts;
 
+    /// <summary>
+    /// The writer's own voice, applied to every prompt below. Set after
+    /// construction because the profile store outlives any one action and is
+    /// read fresh: a profile built this afternoon should reach the next rewrite,
+    /// not the next restart.
+    /// </summary>
+    public StyleProfileService? StyleProfiles { get; set; }
+
     /// <param name="prompts">
     /// The writer's own prompts, read fresh each time the menu is built so an
     /// edit shows up without restarting anything.
@@ -353,6 +361,14 @@ public sealed class InlineRewriteService : IInlineActionContributor
     }
 
     private (string? system, InlineActionDisposition disposition) BuildSystem(string actionId)
+    {
+        var (system, disposition) = BaseSystem(actionId);
+        // Every one of these writes prose that has to sound like the rest of the
+        // book, so the voice goes on all of them rather than a chosen few.
+        return (system == null ? null : StyleProfiles?.Apply(system) ?? system, disposition);
+    }
+
+    private (string? system, InlineActionDisposition disposition) BaseSystem(string actionId)
     {
         var lang = _ai.LanguageName;
         return actionId switch

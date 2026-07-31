@@ -372,5 +372,15 @@
       "clear": "Clear it and re-run",
       "clearDesc": "Discards the old entries. Character knowledge stays empty until you run the scan again."
     }
-  }
+  },
+  "settings.styleSection": "Your voice",
+  "settings.styleProfile": "Write in this voice",
+  "settings.styleNone": "No profile - infer from the passage",
+  "settings.styleBuild": "Build a profile from my prose",
+  "style.built": "Voice profile built from {0} words of your prose.",
+  "style.tooLittle": "There is not enough prose in this book yet to describe a voice.",
+  "style.failed": "The model did not return a description.",
+  "style.saveFailed": "The voice profile could not be saved.",
+  "style.defaultName": "My voice",
+  "style.commandDescription": "Reads a spread of what you have written and describes how you write, so everything the assistant writes sounds like the rest of the book."
 }

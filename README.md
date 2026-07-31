@@ -64,6 +64,16 @@ It writes **no prose**. What you get is a binder full of titled empty scenes wit
 
 Anything that replaces prose you already wrote arrives as a **suggested edit** rather than an overwrite. Generated text is wrong a fair amount of the time, and undo is a poor way to find that out.
 
+### Your voice, described from your own prose
+
+Every prompt used to say "match the existing voice", which asks the model to infer a style from the paragraph it happens to be holding. That works for rewriting a distinctive passage and fails everywhere it matters — continuing from a line of dialogue, describing a room, writing towards a beat. What comes back is competent house style, and you edit your own voice back into it every time.
+
+**Build a profile from my prose** reads a spread of scenes from across the book and asks for a description of how you write: sentence length and how it varies, where the rhythm falls, how you punctuate and attribute dialogue, how much interiority there is, what your descriptions attend to and what they skip. It samples across the book rather than the opening, because an opening is the most rewritten thing a writer owns and the least like the rest of them.
+
+From then on it is appended to every prompt that writes prose, and it is told to outrank any general sense of good style — where the two disagree, the model follows you. Pick **No profile** and nothing changes. You can build more than one and switch, which is the honest answer for a writer whose thriller and whose children's book do not sound alike.
+
+The profile is a description, not your text: it is derived once and stored as prose you can read.
+
 ### Your own prompts
 
 Every built-in prompt here is somebody's opinion about what to say to a model, and that opinion is often wrong for a particular book — a prompt tuned for a thriller is not the one a literary novelist wants.
