@@ -110,8 +110,21 @@
   "critique.bookDescription": "One pass per scene. Slow and worth starting deliberately.",
   "critique.done": "{0} note(s) left as comments.",
   "critique.doneWithEdits": "{0} note(s) left as comments, {1} edit(s) proposed.",
+  "critique.lens.agent": "Agent reading a submission",
+  "critique.lens.agentDescription": "The reasons somebody would stop reading: a slow start, a voice that is not distinctive, a familiar premise.",
+  "critique.lens.continuity": "Continuity reader",
+  "critique.lens.continuityDescription": "Only contradictions: facts, who knows what, details that change, time that does not add up.",
+  "critique.lens.developmental": "Developmental editor",
+  "critique.lens.developmentalDescription": "Whether the scene works: who wants what, what is in the way, what has changed by the end.",
+  "critique.lens.firstReader": "First reader",
+  "critique.lens.firstReaderDescription": "An ordinary reader, not an editor. Where they were confused, bored, unconvinced, or hooked.",
+  "critique.lens.line": "Line editor",
+  "critique.lens.lineDescription": "The sentences only. Telling, filter words, rhythm, and words doing no work.",
+  "critique.lens.voice": "Voice",
+  "critique.lens.voiceDescription": "Whether everyone sounds like themselves, and the narration sounds like the point-of-view character.",
   "critique.noScene": "Open a scene first.",
   "critique.nothingFound": "Nothing worth flagging.",
+  "critique.sceneAs": "Critique this scene: {0}",
   "critique.sceneCommand": "Critique this scene",
   "critique.sceneDescription": "Reads the open scene and leaves its notes as comments on the sentences they are about.",
   "critique.tooShort": "There is not enough prose in this scene to critique.",
@@ -330,13 +343,34 @@
         "help": "LM Studio runs a model locally. GitHub Copilot CLI is cloud-hosted and needs a copilot binary on PATH.",
         "lmstudio": "LM Studio (local)",
         "lmstudioDesc": "Free, private, runs against a model loaded in LM Studio on your machine.",
-        "title": "Which provider?"
+        "title": "Which provider?",
+        "claude": "Claude Code CLI",
+        "claudeDesc": "Uses the claude binary on PATH. Fast; runs on your own Claude subscription or API key."
       },
       "responseLanguage": {
         "help": "Empty = follow the app's UI language.",
         "placeholder": "English",
         "title": "Response language"
+      },
+      "claudePath": {
+        "title": "Claude Code CLI path",
+        "help": "Path or command name. \"claude\" works if the binary is on PATH."
+      },
+      "claudeModel": {
+        "title": "Claude model",
+        "help": "An alias the CLI accepts: sonnet, opus, haiku, or fable."
       }
+    },
+    "knowledgeMigration": {
+      "description": "Novalist now analyses each scene once and derives every character's knowledge from that single record. You have knowledge for {0} character(s) from the previous approach, which was generated per character instead.",
+      "choice": {
+        "title": "What should happen to it?",
+        "help": "Keeping it costs nothing now but mixes two kinds of data. Clearing it means a re-run, which is one pass per scene rather than per character."
+      },
+      "keep": "Keep it as a fallback",
+      "keepDesc": "Old entries stay and are used where no scene record exists yet. They are replaced as scenes get analysed.",
+      "clear": "Clear it and re-run",
+      "clearDesc": "Discards the old entries. Character knowledge stays empty until you run the scan again."
     }
   }
 }

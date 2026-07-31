@@ -110,8 +110,21 @@
   "critique.bookDescription": "Ein Durchgang pro Szene. Langsam und bewusst zu starten.",
   "critique.done": "{0} Anmerkung(en) als Kommentare hinterlassen.",
   "critique.doneWithEdits": "{0} Anmerkung(en) als Kommentare, {1} Änderung(en) vorgeschlagen.",
+  "critique.lens.agent": "Agentur liest eine Einsendung",
+  "critique.lens.agentDescription": "Die Gründe aufzuhören: ein langsamer Anfang, eine austauschbare Stimme, eine vertraute Prämisse.",
+  "critique.lens.continuity": "Kontinuität",
+  "critique.lens.continuityDescription": "Nur Widersprüche: Fakten, wer was weiß, Details die sich ändern, Zeit die nicht aufgeht.",
+  "critique.lens.developmental": "Lektorat (Inhalt)",
+  "critique.lens.developmentalDescription": "Ob die Szene funktioniert: Wer will was, was steht im Weg, was hat sich am Ende geändert.",
+  "critique.lens.firstReader": "Erste Leserin",
+  "critique.lens.firstReaderDescription": "Eine gewöhnliche Lesende, kein Lektorat. Wo es verwirrend, langweilig, unglaubwürdig oder packend war.",
+  "critique.lens.line": "Lektorat (Sprache)",
+  "critique.lens.lineDescription": "Nur die Sätze. Erzähltes statt Gezeigtes, Filterwörter, Rhythmus und Wörter ohne Aufgabe.",
+  "critique.lens.voice": "Stimme",
+  "critique.lens.voiceDescription": "Ob alle nach sich selbst klingen und die Erzählstimme nach der Perspektivfigur.",
   "critique.noScene": "Öffnen Sie zuerst eine Szene.",
   "critique.nothingFound": "Nichts Auffälliges gefunden.",
+  "critique.sceneAs": "Diese Szene kritisieren: {0}",
   "critique.sceneCommand": "Diese Szene kritisieren",
   "critique.sceneDescription": "Liest die offene Szene und hinterlässt Anmerkungen als Kommentare an den betreffenden Sätzen.",
   "critique.tooShort": "In dieser Szene steht zu wenig Text für eine Kritik.",
@@ -330,13 +343,34 @@
         "help": "LM Studio führt ein Modell lokal aus. GitHub Copilot CLI ist cloudbasiert und benötigt eine copilot-Datei im PATH.",
         "lmstudio": "LM Studio (lokal)",
         "lmstudioDesc": "Kostenlos, privat, nutzt ein in LM Studio geladenes Modell auf deinem Rechner.",
-        "title": "Welcher Anbieter?"
+        "title": "Welcher Anbieter?",
+        "claude": "Claude Code CLI",
+        "claudeDesc": "Nutzt die claude-Binärdatei im PATH. Schnell; läuft über dein eigenes Claude-Abo oder deinen API-Schlüssel."
       },
       "responseLanguage": {
         "help": "Leer = folgt der UI-Sprache der App.",
         "placeholder": "Deutsch",
         "title": "Antwortsprache"
+      },
+      "claudePath": {
+        "title": "Pfad zur Claude Code CLI",
+        "help": "Pfad oder Befehlsname. \"claude\" genügt, wenn die Binärdatei im PATH liegt."
+      },
+      "claudeModel": {
+        "title": "Claude-Modell",
+        "help": "Ein Alias, den die CLI annimmt: sonnet, opus, haiku oder fable."
       }
+    },
+    "knowledgeMigration": {
+      "description": "Novalist analysiert jede Szene jetzt einmal und leitet daraus ab, was jede Figur weiß. Aus dem früheren Verfahren, das pro Figur lief, liegt Wissen für {0} Figur(en) vor.",
+      "choice": {
+        "title": "Was soll damit geschehen?",
+        "help": "Behalten kostet jetzt nichts, vermischt aber zwei Arten von Daten. Verwerfen bedeutet einen neuen Durchlauf, und der geht pro Szene statt pro Figur."
+      },
+      "keep": "Als Rückfalloption behalten",
+      "keepDesc": "Alte Einträge bleiben und greifen dort, wo es noch keinen Szenen-Datensatz gibt. Sie werden ersetzt, sobald die Szenen analysiert sind.",
+      "clear": "Verwerfen und neu durchlaufen",
+      "clearDesc": "Verwirft die alten Einträge. Das Figurenwissen bleibt leer, bis du den Scan erneut startest."
     }
   }
 }

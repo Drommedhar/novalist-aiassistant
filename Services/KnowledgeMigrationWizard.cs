@@ -32,10 +32,13 @@ public static class KnowledgeMigrationWizard
         return new WizardDefinition
         {
             Id = "ai.knowledgeMigration",
+            // The count belongs in the translated sentence, not spliced onto the
+            // end of it - German puts it somewhere else.
             Description = T("wizard.knowledgeMigration.description",
-                $"Novalist now analyses each scene once and derives every character's knowledge "
-                + $"from that single record. You have knowledge for {characterFiles} character(s) "
-                + "from the previous approach, which was generated per character instead."),
+                    "Novalist now analyses each scene once and derives every character's knowledge "
+                    + "from that single record. You have knowledge for {0} character(s) "
+                    + "from the previous approach, which was generated per character instead.")
+                .Replace("{0}", characterFiles.ToString()),
             Scope = WizardScope.Project,
             Steps =
             [

@@ -50,12 +50,19 @@ public sealed class CritiqueService
     /// told what is wrong has not necessarily asked to be told what to write
     /// instead, and those are different invitations.
     /// </param>
+    /// <param name="lensKey">
+    /// Who is reading. Null or unknown is the developmental read, which is what
+    /// every caller meant before there was a choice.
+    /// </param>
     public async Task<CritiqueReport> CritiqueSceneAsync(
         string chapterGuid,
         string sceneId,
         bool proposeEdits = false,
+        string? lensKey = null,
         CancellationToken cancellationToken = default)
     {
+        var lens = CritiqueLenses.Resolve(lensKey);
+
         var html = await _host.ProjectService.ReadSceneContentAsync(chapterGuid, sceneId)
             .ConfigureAwait(false);
         var prose = Prose(html);
@@ -66,7 +73,7 @@ public sealed class CritiqueService
 
         var messages = new List<SdkAiChatMessage>
         {
-            new() { Role = "system", Content = SystemPrompt(proposeEdits) },
+            new() { Role = "system", Content = SystemPrompt(proposeEdits, lens) },
             new() { Role = "user", Content = context + "SCENE:\n" + prose },
         };
 
@@ -128,6 +135,7 @@ public sealed class CritiqueService
     public async Task<CritiqueReport> CritiqueBookAsync(
         bool proposeEdits,
         IProgress<string>? progress,
+        string? lensKey = null,
         CancellationToken cancellationToken = default)
     {
         var comments = 0;
@@ -141,7 +149,8 @@ public sealed class CritiqueService
                 progress?.Report($"{chapter.Title} / {scene.Title}");
 
                 var report = await CritiqueSceneAsync(
-                    chapter.Guid, scene.Id, proposeEdits, cancellationToken).ConfigureAwait(false);
+                    chapter.Guid, scene.Id, proposeEdits, lensKey, cancellationToken)
+                    .ConfigureAwait(false);
                 comments += report.Comments;
                 suggestions += report.Suggestions;
             }
@@ -153,21 +162,22 @@ public sealed class CritiqueService
     /// <summary>One remark, as the model was asked to phrase it.</summary>
     internal sealed record Finding(string Anchor, string Kind, string Note, string? Rewrite);
 
-    private string SystemPrompt(bool proposeEdits)
+    private string SystemPrompt(bool proposeEdits, CritiqueLens lens)
     {
         var builder = new StringBuilder();
+        // Who is reading, and what they are for. One editor looking for seven
+        // things at once returned the same shape of note on every scene; a
+        // named reader with a brief returns notes worth reading twice.
+        builder.Append(lens.Brief);
         builder.Append(
-            "You are a developmental editor reading one scene of a novel. Find the specific, "
-            + "actionable problems - not general praise, not a summary. Look for: a line that "
-            + "tells where it should show, dialogue that does not sound like the character, a "
-            + "beat that repeats one already made, a sentence whose meaning is unclear, a "
-            + "detail that contradicts the context given, pacing that stalls, and filter words "
-            + "that hold the reader at arm's length.\n\n");
+            "\n\nFind the specific, actionable problems - not general praise, not a summary. "
+            + "Stay inside what you have been asked to look at: a note outside it is a note the "
+            + "writer did not ask for and will have to sort out of the ones they did.\n\n");
 
         builder.Append(
             "Reply as a JSON array and nothing else. Each element:\n"
             + "{\"anchor\": \"an exact phrase copied from the scene, 3-12 words\", "
-            + "\"kind\": \"one of: telling, voice, repetition, clarity, continuity, pacing, filter\", "
+            + $"\"kind\": \"one of: {string.Join(", ", lens.Kinds)}\", "
             + "\"note\": \"one or two sentences saying what is wrong and why\"");
 
         if (proposeEdits)

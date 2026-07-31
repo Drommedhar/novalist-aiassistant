@@ -849,6 +849,14 @@ public sealed class AiAssistantExtension : IExtension, IStatusBarContributor, IR
         "com.novalist.ai.outline",
     ];
 
+    /// <summary>
+    /// One command per reader, so the palette shows who is available and a key
+    /// can be bound to the read the writer actually uses. The developmental read
+    /// keeps the original id above rather than gaining a second one.
+    /// </summary>
+    private static string LensCommandId(string lensKey)
+        => $"com.novalist.ai.critique.scene.{lensKey}";
+
     private void RegisterAiCommands()
     {
         _host.RegisterCommand(
@@ -862,10 +870,13 @@ public sealed class AiAssistantExtension : IExtension, IStatusBarContributor, IR
                     """
                     {"type":"object","properties":{
                       "proposeEdits":{"type":"boolean",
-                        "description":"Also propose wordings, as suggested edits."}}}
-                    """,
+                        "description":"Also propose wordings, as suggested edits."},
+                      "lens":{"type":"string","enum":[LENS_KEYS],
+                        "description":"Who is reading. Omitted is the developmental read."}}}
+                    """.Replace("LENS_KEYS", LensKeysJson),
             },
-            argumentsJson => CritiqueOpenSceneAsync(ReadFlag(argumentsJson, "proposeEdits")));
+            argumentsJson => CritiqueOpenSceneAsync(
+                ReadFlag(argumentsJson, "proposeEdits"), ReadText(argumentsJson, "lens")));
 
         _host.RegisterCommand(
             new HostCommandInfo
@@ -876,10 +887,33 @@ public sealed class AiAssistantExtension : IExtension, IStatusBarContributor, IR
                 Mutates = true,
                 ArgumentsSchema =
                     """
-                    {"type":"object","properties":{"proposeEdits":{"type":"boolean"}}}
-                    """,
+                    {"type":"object","properties":{"proposeEdits":{"type":"boolean"},
+                      "lens":{"type":"string","enum":[LENS_KEYS]}}}
+                    """.Replace("LENS_KEYS", LensKeysJson),
             },
-            argumentsJson => CritiqueBookAsync(ReadFlag(argumentsJson, "proposeEdits")));
+            argumentsJson => CritiqueBookAsync(
+                ReadFlag(argumentsJson, "proposeEdits"), ReadText(argumentsJson, "lens")));
+
+        // The other readers. Skipping the first is not a special case - it is
+        // the command registered above, under the id it has always had.
+        foreach (var lens in CritiqueLenses.All.Skip(1))
+        {
+            var key = lens.Key;
+            _host.RegisterCommand(
+                new HostCommandInfo
+                {
+                    Id = LensCommandId(key),
+                    Title = _loc.T("critique.sceneAs").Replace("{0}", _loc.T($"critique.lens.{key}")),
+                    Description = _loc.T($"critique.lens.{key}Description"),
+                    Mutates = true,
+                    ArgumentsSchema =
+                        """
+                        {"type":"object","properties":{"proposeEdits":{"type":"boolean"}}}
+                        """,
+                },
+                argumentsJson => CritiqueOpenSceneAsync(
+                    ReadFlag(argumentsJson, "proposeEdits"), key));
+        }
 
         _host.RegisterCommand(
             new HostCommandInfo
@@ -912,13 +946,19 @@ public sealed class AiAssistantExtension : IExtension, IStatusBarContributor, IR
     private void UnregisterAiCommands()
     {
         foreach (var id in AiCommandIds) _host.UnregisterCommand(id);
+        foreach (var lens in CritiqueLenses.All.Skip(1))
+            _host.UnregisterCommand(LensCommandId(lens.Key));
     }
+
+    /// <summary>The lens keys as a JSON array body, for the argument schemas.</summary>
+    private static string LensKeysJson { get; } =
+        string.Join(",", CritiqueLenses.All.Select(l => $"\"{l.Key}\""));
 
     /// <summary>
     /// Critiques the scene the writer is looking at. The open scene rather than a
     /// named one, because that is the scene they are asking about.
     /// </summary>
-    private async Task CritiqueOpenSceneAsync(bool proposeEdits)
+    private async Task CritiqueOpenSceneAsync(bool proposeEdits, string? lensKey = null)
     {
         var scene = _host.ProjectService.CurrentScene ?? _lastOpenedScene;
         if (scene == null || string.IsNullOrEmpty(scene.ChapterGuid))
@@ -929,19 +969,20 @@ public sealed class AiAssistantExtension : IExtension, IStatusBarContributor, IR
 
         using var progress = _host.ShowBusyProgress(new BusyProgressOptions
         {
-            Title = _loc.T("critique.sceneCommand"),
+            Title = _loc.T("critique.sceneAs")
+                .Replace("{0}", _loc.T($"critique.lens.{CritiqueLenses.Resolve(lensKey).Key}")),
             InitialStatus = scene.Title,
             IsIndeterminate = true,
             AllowCancel = true,
         });
 
         var report = await _critiqueService!.CritiqueSceneAsync(
-            scene.ChapterGuid, scene.Id, proposeEdits, progress.CancellationToken);
+            scene.ChapterGuid, scene.Id, proposeEdits, lensKey, progress.CancellationToken);
         progress.Dispose();
         Report(report);
     }
 
-    private async Task CritiqueBookAsync(bool proposeEdits)
+    private async Task CritiqueBookAsync(bool proposeEdits, string? lensKey = null)
     {
         using var progress = _host.ShowBusyProgress(new BusyProgressOptions
         {
@@ -953,6 +994,7 @@ public sealed class AiAssistantExtension : IExtension, IStatusBarContributor, IR
         var report = await _critiqueService!.CritiqueBookAsync(
             proposeEdits,
             new Progress<string>(where => progress.SetStatus(where)),
+            lensKey,
             progress.CancellationToken);
         progress.Dispose();
         Report(report);
@@ -1205,6 +1247,24 @@ public sealed class AiAssistantExtension : IExtension, IStatusBarContributor, IR
         }
         catch (IOException)
         {
+        }
+    }
+
+    /// <summary>A string argument, or null when it was not given.</summary>
+    private static string? ReadText(string? argumentsJson, string name)
+    {
+        if (string.IsNullOrWhiteSpace(argumentsJson)) return null;
+        try
+        {
+            using var document = System.Text.Json.JsonDocument.Parse(argumentsJson);
+            return document.RootElement.TryGetProperty(name, out var value)
+                && value.ValueKind == System.Text.Json.JsonValueKind.String
+                ? value.GetString()
+                : null;
+        }
+        catch (System.Text.Json.JsonException)
+        {
+            return null;
         }
     }
 

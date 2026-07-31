@@ -29,6 +29,21 @@ Proposing wordings is off unless you ask for it. Being told what is wrong and be
 
 **Critique the whole book** does the same scene by scene. It is one model call per scene, so it reports as it goes and can be stopped.
 
+#### Choose who is reading
+
+One editor looking for everything at once returns the same shape of note on every scene, and half of it is always for a different day. So the read is a choice, and each one is its own command — searchable in the palette, bindable to a key:
+
+- **Developmental editor** — whether the scene works. Who wants what, what is in the way, what has changed by the end. Nothing about sentences.
+- **Line editor** — the sentences only. Telling where it should show, filter words, rhythm, words doing no work.
+- **Voice** — whether everyone sounds like themselves and unlike each other, and whether the narration sounds like the point-of-view character rather than like you.
+- **Continuity reader** — only contradictions. Facts, who knows what, details that change, time that does not add up.
+- **First reader** — an ordinary reader, not an editor. Where they were confused, bored, unconvinced, or wanted to keep going, said plainly and in the first person.
+- **Agent reading a submission** — the reasons somebody would stop: a slow start, a competent but undistinctive voice, a familiar premise handled familiarly.
+
+Each reader is held to its own kinds of finding, so the line editor cannot wander into structure and the continuity reader cannot tell you a sentence is flat. The same scene read twice by two of them says two different things, and both are worth having.
+
+The whole-book pass takes a reader too, and both commands accept it as an argument, so a script can ask for a continuity sweep without touching the palette.
+
 ### Build a story bible from the manuscript
 
 For the writer who has 90,000 words and an empty Codex, which is a common way to arrive at Novalist. It reads the book and proposes entries for the people, places, things and lore it finds, drawn only from what the prose actually establishes.
