@@ -1,0 +1,12 @@
+<Project>
+
+  <!--
+    The SDK ships a locale check that fails the build on a key the code asks
+    for and the locale files do not have. A PackageReference brings it in on
+    its own; a ProjectReference does not, because MSBuild only imports a
+    package's build folder for package references. Extensions here build
+    against the checkout next door, so it is imported by hand.
+  -->
+  <Import Project="$(MSBuildThisFileDirectory)..\novalist-official\Novalist.Sdk\build\Novalist.Sdk.targets"
+          Condition="Exists('$(MSBuildThisFileDirectory)..\novalist-official\Novalist.Sdk\build\Novalist.Sdk.targets')" />
+</Project>

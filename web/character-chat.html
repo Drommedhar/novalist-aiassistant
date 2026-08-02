@@ -2,17 +2,33 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
+<script src="__novalist/theme.js"></script>
 <title>Character Chat</title>
 <style>
 :root {
-  --bg: #1e1e1e; --card: #252526; --border: #333; --text: #e6edf3;
-  --dim: #b9bac5; --subtle: #848b91; --accent: #0e8bdf;
+  /* Novalist hands the whole --nl-* set to a panel that asks for it (the theme
+     shim above). Each name below is the app token it corresponds to, so this
+     panel follows the writer's theme; the hex is the fallback for a host too
+     old to send anything. */
+  --bg: var(--nl-surface-editor, #1e1e1e);
+  --card: var(--nl-surface-card, #252526);
+  --border: var(--nl-border, #333);
+  --text: var(--nl-text, #e6edf3);
+  --dim: var(--nl-text-dim, #b9bac5);
+  --subtle: var(--nl-text-subtle, #848b91);
+  --accent: var(--nl-accent, #0e8bdf);
+  /* The label colour on the accent. White is wrong on a gold accent, which is
+     what Novalist's own theme uses. */
+  --on-accent: var(--nl-accent-ink, #fff);
+  --warn: var(--nl-warning, #f5a623);
 }
 * { box-sizing: border-box; }
 html, body { height: 100%; margin: 0; }
 body {
   display: flex; flex-direction: column;
-  font: 13px/1.5 system-ui, sans-serif;
+  font-family: var(--nl-font-family, system-ui, sans-serif);
+  font-size: var(--nl-font-ui, 13px);
+  line-height: 1.5;
   background: var(--bg); color: var(--text);
 }
 #setup { display: flex; gap: 8px; padding: 10px; border-bottom: 1px solid var(--border); }
@@ -24,7 +40,7 @@ select {
 #turns { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
 .turn { max-width: 85%; padding: 8px 12px; border-radius: 10px; white-space: pre-wrap; }
 .turn .speaker { font-size: 11px; color: var(--subtle); margin-bottom: 2px; }
-.turn.user { align-self: flex-end; background: var(--accent); color: #fff; }
+.turn.user { align-self: flex-end; background: var(--accent); color: var(--on-accent); }
 .turn.character { align-self: flex-start; background: var(--card); border: 1px solid var(--border); }
 #composer { display: flex; gap: 8px; padding: 10px; border-top: 1px solid var(--border); }
 #input {
@@ -33,7 +49,7 @@ select {
 }
 button {
   font: inherit; border: none; border-radius: 8px; padding: 8px 14px;
-  background: var(--accent); color: #fff; cursor: pointer;
+  background: var(--accent); color: var(--on-accent); cursor: pointer;
 }
 button.secondary { background: var(--card); color: var(--dim); border: 1px solid var(--border); }
 button:disabled { opacity: .5; cursor: default; }
