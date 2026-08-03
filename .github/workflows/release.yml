@@ -76,8 +76,23 @@ jobs:
             Locales/*.json \
             web/*.html
 
+      # The store reads compatibility, the icon and the page from the release
+      # when they are there, and falls back to the manifest at the repository
+      # root when they are not. That fallback reads the file at the tagged
+      # commit, which is the unstamped one - so the store showed the version
+      # from the last time somebody edited the file by hand rather than the
+      # version actually in the ZIP.
+      - name: Publish the manifest and the store page beside the ZIP
+        working-directory: novalist-aiassistant
+        run: |
+          cp extension.json "${GITHUB_WORKSPACE}/${EXTENSION_ID}.extension.json"
+          cp README.md "${GITHUB_WORKSPACE}/${EXTENSION_ID}.README.md"
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
-          files: ${{ env.EXTENSION_ID }}.zip
+          files: |
+            ${{ env.EXTENSION_ID }}.zip
+            ${{ env.EXTENSION_ID }}.extension.json
+            ${{ env.EXTENSION_ID }}.README.md
