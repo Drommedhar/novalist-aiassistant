@@ -162,7 +162,14 @@ public partial class CharacterChatViewModel : ObservableObject, IDisposable
     [RelayCommand]
     private async Task SendAsync()
     {
-        if (SelectedCharacter == null) return;
+        // Keep one turn tied to the character and scene it started with. Both
+        // selectors remain interactive while knowledge and the model are
+        // awaited; reading the observable properties again afterwards could
+        // label one character's answer with another character's name (and was
+        // also the nullable warning on the completed await).
+        var character = SelectedCharacter;
+        var scene = SelectedScene;
+        if (character == null) return;
         var text = UserInput.Trim();
         if (string.IsNullOrEmpty(text)) return;
         if (IsGenerating || IsPreparingKnowledge) return;
@@ -177,19 +184,20 @@ public partial class CharacterChatViewModel : ObservableObject, IDisposable
             if (_systemPromptDirty)
             {
                 _history.Clear();
-                var systemPrompt = await BuildSystemPromptAsync();
+                var systemPrompt = await BuildSystemPromptAsync(character, scene);
                 var systemMsg = new AiChatMessage { Role = "system", Content = systemPrompt };
                 _history.Add(systemMsg);
-                _systemPromptDirty = false;
+                _systemPromptDirty = SelectedCharacter?.Id != character.Id
+                    || SelectedScene?.Id != scene?.Id;
                 firstTurnAfterSystem = true;
 
-                if (IncludeCharacterImage && SelectedCharacter != null)
+                if (IncludeCharacterImage)
                 {
                     attachedImagePath = await _host.EntityService.GetCharacterImagePathAsync(
-                        SelectedCharacter.Id,
-                        SelectedScene?.ChapterGuid,
-                        SelectedScene?.Id);
-                    Debug.WriteLine($"[CharacterChat] Image resolve for {SelectedCharacter.DisplayName} → {(attachedImagePath ?? "NULL")}");
+                        character.Id,
+                        scene?.ChapterGuid,
+                        scene?.Id);
+                    Debug.WriteLine($"[CharacterChat] Image resolve for {character.DisplayName} → {(attachedImagePath ?? "NULL")}");
                 }
             }
 
@@ -199,7 +207,7 @@ public partial class CharacterChatViewModel : ObservableObject, IDisposable
             if (firstTurnAfterSystem && !string.IsNullOrEmpty(attachedImagePath))
             {
                 userMsg.ImagePaths = [attachedImagePath];
-                userMsg.Content = $"[Reference image of {SelectedCharacter?.DisplayName} attached.]\n\n{text}";
+                userMsg.Content = $"[Reference image of {character.DisplayName} attached.]\n\n{text}";
                 Debug.WriteLine($"[CharacterChat] Attaching image to first user message: {attachedImagePath}");
             }
             _history.Add(userMsg);
@@ -217,7 +225,7 @@ public partial class CharacterChatViewModel : ObservableObject, IDisposable
                 cancellationToken: _cts.Token);
 
             _history.Add(new AiChatMessage { Role = "assistant", Content = result.Response });
-            Turns.Add(new CharacterChatTurn(SelectedCharacter.DisplayName, result.Response, true));
+            Turns.Add(new CharacterChatTurn(character.DisplayName, result.Response, true));
         }
         catch (OperationCanceledException) { }
         catch (Exception ex)
@@ -237,10 +245,8 @@ public partial class CharacterChatViewModel : ObservableObject, IDisposable
         _cts?.Cancel();
     }
 
-    private async Task<string> BuildSystemPromptAsync()
+    private async Task<string> BuildSystemPromptAsync(CharacterInfo character, SceneOption? scene)
     {
-        if (SelectedCharacter == null) return string.Empty;
-
         // Resolve rich character data with scene/chapter/act override fallback
         // applied by the host (so muteness / age / appearance overrides etc.
         // for the selected scene are honored).
@@ -248,9 +254,9 @@ public partial class CharacterChatViewModel : ObservableObject, IDisposable
         try
         {
             detailed = await _host.EntityService.GetCharacterDetailedAsync(
-                SelectedCharacter.Id,
-                SelectedScene?.ChapterGuid,
-                SelectedScene?.Id);
+                character.Id,
+                scene?.ChapterGuid,
+                scene?.Id);
         }
         catch (Exception ex)
         {
@@ -259,7 +265,7 @@ public partial class CharacterChatViewModel : ObservableObject, IDisposable
 
         var displayName = !string.IsNullOrWhiteSpace(detailed?.DisplayName)
             ? detailed!.DisplayName
-            : SelectedCharacter.DisplayName;
+            : character.DisplayName;
 
         var sb = new StringBuilder();
         sb.AppendLine("# ROLE");
@@ -273,7 +279,7 @@ public partial class CharacterChatViewModel : ObservableObject, IDisposable
         if (detailed != null)
             sb.Append(CharacterSheetBuilder.Build(detailed));
         else
-            sb.Append(CharacterSheetBuilder.BuildFallback(SelectedCharacter));
+            sb.Append(CharacterSheetBuilder.BuildFallback(character));
         sb.AppendLine();
 
         sb.AppendLine("# CONSTRAINTS");
@@ -288,20 +294,20 @@ public partial class CharacterChatViewModel : ObservableObject, IDisposable
         sb.AppendLine("If a constraint prevents you from answering with words, respond in a way that fits the constraint: silence described in your own voice, gestures, written notes (if you can write), nonverbal reactions. Do NOT pretend the limitation does not exist.");
         sb.AppendLine();
 
-        if (IncludeSceneKnowledge && SelectedScene != null && !string.IsNullOrEmpty(SelectedScene.Id))
+        if (IncludeSceneKnowledge && scene != null && !string.IsNullOrEmpty(scene.Id))
         {
-            var knowledge = await BuildCumulativeKnowledgeAsync();
+            var knowledge = await BuildCumulativeKnowledgeAsync(character, scene);
             sb.AppendLine("# KNOWLEDGE");
             if (!string.IsNullOrWhiteSpace(knowledge))
             {
-                sb.AppendLine($"What you know up to AND INCLUDING the scene \"{SelectedScene.SceneTitle}\":");
+                sb.AppendLine($"What you know up to AND INCLUDING the scene \"{scene.SceneTitle}\":");
                 sb.AppendLine("You only know what is listed below. Do NOT reveal, hint at, or act on information from later scenes.");
                 sb.AppendLine();
                 sb.AppendLine(knowledge);
             }
             else
             {
-                sb.AppendLine($"You have not yet experienced anything notable up to scene \"{SelectedScene.SceneTitle}\". Respond from a stance of ignorance about future events.");
+                sb.AppendLine($"You have not yet experienced anything notable up to scene \"{scene.SceneTitle}\". Respond from a stance of ignorance about future events.");
             }
             sb.AppendLine();
         }
@@ -314,17 +320,18 @@ public partial class CharacterChatViewModel : ObservableObject, IDisposable
         return sb.ToString();
     }
 
-    private async Task<string> BuildCumulativeKnowledgeAsync()
+    private async Task<string> BuildCumulativeKnowledgeAsync(
+        CharacterInfo character,
+        SceneOption scene)
     {
         var ks = _knowledgeAccessor();
-        if (ks == null || SelectedCharacter == null || SelectedScene == null) return string.Empty;
-        if (string.IsNullOrEmpty(SelectedScene.Id)) return string.Empty;
+        if (ks == null || string.IsNullOrEmpty(scene.Id)) return string.Empty;
 
         var ordered = new List<(ChapterInfo Chapter, SceneInfo Scene)>();
         foreach (var chapter in _host.ProjectService.GetChaptersOrdered())
         {
-            foreach (var scene in _host.ProjectService.GetScenesForChapter(chapter.Guid))
-                ordered.Add((chapter, scene));
+            foreach (var projectScene in _host.ProjectService.GetScenesForChapter(chapter.Guid))
+                ordered.Add((chapter, projectScene));
         }
 
         IsPreparingKnowledge = true;
@@ -339,8 +346,8 @@ public partial class CharacterChatViewModel : ObservableObject, IDisposable
             });
 
             return await ks.BuildCumulativeAsync(
-                SelectedCharacter,
-                SelectedScene.Id,
+                character,
+                scene.Id,
                 ordered,
                 async (chapter, scene) => await _host.ProjectService.ReadSceneContentAsync(chapter.Guid, scene.Id),
                 progress,

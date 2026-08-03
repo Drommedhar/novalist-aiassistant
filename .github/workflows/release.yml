@@ -18,8 +18,24 @@ jobs:
       contents: write
 
     steps:
+      # Checked out beside the SDK rather than at the root of the workspace:
+      # the project reference and the locale-check import both point at
+      # ..\novalist-official, so the two have to be siblings.
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          path: novalist-aiassistant
+
+      # Built against the SDK source, not the published package. This extension
+      # uses SDK surface that reaches NuGet only when the host that introduced
+      # it ships, so a release built against the package fails until then, and
+      # one built against a stale package is worse - it compiles and then the
+      # host refuses to load what it produced.
+      - name: Check out the SDK
+        uses: actions/checkout@v4
+        with:
+          repository: Drommedhar/novalist-official
+          path: novalist-official
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
@@ -27,23 +43,33 @@ jobs:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
       - name: Set version in extension.json
+        working-directory: novalist-aiassistant
         run: |
           VERSION=${GITHUB_REF_NAME#v}
           jq --arg v "$VERSION" '.version = $v' extension.json > extension.tmp && mv extension.tmp extension.json
 
+      # No UseLocalSdk=false: leaving it unset is what selects the project
+      # reference over the package.
       - name: Restore
-        run: dotnet restore -p:UseLocalSdk=false
+        working-directory: novalist-aiassistant
+        run: dotnet restore
 
       - name: Build
+        working-directory: novalist-aiassistant
         run: >-
           dotnet build
           -c ${{ env.CONFIGURATION }}
           --no-restore
-          -p:UseLocalSdk=false
 
       - name: Create extension ZIP
+        working-directory: novalist-aiassistant
         run: |
           cd bin/${{ env.CONFIGURATION }}/net8.0
+          # The SDK assembly is left out on purpose: the host supplies it, and
+          # shipping a copy is how an extension ends up loading two different
+          # versions of the same types. A project reference copies it into the
+          # output where a package reference did not, so this is now a list of
+          # what to include rather than everything that is there.
           zip ${{ github.workspace }}/${{ env.EXTENSION_ID }}.zip \
             Novalist.Extensions.AiAssistant.dll \
             extension.json \
