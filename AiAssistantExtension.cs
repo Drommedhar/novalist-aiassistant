@@ -486,29 +486,7 @@ public sealed class AiAssistantExtension : IExtension, IStatusBarContributor, IR
 
         // Seed current values so the wizard reflects existing settings instead
         // of starting blank when re-launched from the settings page.
-        var seed = new Novalist.Sdk.Models.Wizards.WizardResult { DefinitionId = definition.Id };
-        seed.Answers["enabled"] = new Novalist.Sdk.Models.Wizards.WizardAnswer
-        {
-            Text = Settings.Enabled ? "true" : "false",
-        };
-        if (!string.IsNullOrEmpty(Settings.Provider))
-            seed.Answers["provider"] = new Novalist.Sdk.Models.Wizards.WizardAnswer { Text = Settings.Provider };
-        if (!string.IsNullOrEmpty(Settings.LmStudioBaseUrl))
-            seed.Answers["lmStudioBaseUrl"] = new Novalist.Sdk.Models.Wizards.WizardAnswer { Text = Settings.LmStudioBaseUrl };
-        if (!string.IsNullOrEmpty(Settings.LmStudioModel))
-            seed.Answers["lmStudioModel"] = new Novalist.Sdk.Models.Wizards.WizardAnswer { Text = Settings.LmStudioModel };
-        if (!string.IsNullOrEmpty(Settings.LmStudioApiToken))
-            seed.Answers["lmStudioApiToken"] = new Novalist.Sdk.Models.Wizards.WizardAnswer { Text = Settings.LmStudioApiToken };
-        if (!string.IsNullOrEmpty(Settings.CopilotPath))
-            seed.Answers["copilotPath"] = new Novalist.Sdk.Models.Wizards.WizardAnswer { Text = Settings.CopilotPath };
-        if (!string.IsNullOrEmpty(Settings.CopilotModel))
-            seed.Answers["copilotModel"] = new Novalist.Sdk.Models.Wizards.WizardAnswer { Text = Settings.CopilotModel };
-        if (!string.IsNullOrEmpty(Settings.ClaudePath))
-            seed.Answers["claudePath"] = new Novalist.Sdk.Models.Wizards.WizardAnswer { Text = Settings.ClaudePath };
-        if (!string.IsNullOrEmpty(Settings.ClaudeModel))
-            seed.Answers["claudeModel"] = new Novalist.Sdk.Models.Wizards.WizardAnswer { Text = Settings.ClaudeModel };
-        if (!string.IsNullOrEmpty(Settings.ResponseLanguage))
-            seed.Answers["responseLanguage"] = new Novalist.Sdk.Models.Wizards.WizardAnswer { Text = Settings.ResponseLanguage };
+        var seed = Services.AiSetupWizard.CreateSeed(Settings);
 
         var result = await _host.RunWizardAsync(definition, seed);
         if (result == null || !result.Completed) return;
@@ -625,12 +603,16 @@ public sealed class AiAssistantExtension : IExtension, IStatusBarContributor, IR
             Fields =
             [
                 Bool("enabled", _loc.T("settings.aiEnabled"), Settings.Enabled, providerGroup, _loc.T("settings.aiEnabledDesc")),
-                Select("provider", _loc.T("settings.aiProvider"), Settings.Provider, ["lmstudio", "anthropic", "copilot", "claude"], providerGroup),
-                Text("lmStudioBaseUrl", _loc.T("settings.aiBaseUrl"), Settings.LmStudioBaseUrl, providerGroup, "provider", LmStudio),
-                Text("lmStudioModel", _loc.T("settings.aiModel"), Settings.LmStudioModel, providerGroup, "provider", LmStudio, _availableModels),
-                Password("lmStudioApiToken", _loc.T("settings.aiApiToken"), Settings.LmStudioApiToken, providerGroup, "provider", LmStudio),
-                Select("openAiCompatiblePreset", _loc.T("settings.aiPreset"), Settings.OpenAiCompatiblePreset,
-                    [.. AiSettings.OpenAiCompatiblePresets.Keys], providerGroup),
+                new SettingsField
+                {
+                    Key = "provider", Label = _loc.T("settings.aiProvider"), Type = SettingsFieldType.Select,
+                    Value = AiProviders.Selected(Settings), Options = [.. AiProviders.Labels.Keys], Group = providerGroup,
+                    OptionLabels = new Dictionary<string, string>(AiProviders.Labels) { ["custom"] = _loc.T("settings.aiCustomProvider") },
+                    Help = _loc.T("settings.aiProviderDesc"),
+                },
+                Text("lmStudioBaseUrl", _loc.T("settings.aiBaseUrl"), Settings.LmStudioBaseUrl, providerGroup, "provider", AiProviders.CompatibleIds),
+                Text("lmStudioModel", _loc.T("settings.aiModel"), Settings.LmStudioModel, providerGroup, "provider", AiProviders.CompatibleIds, _availableModels),
+                Password("lmStudioApiToken", _loc.T("settings.aiApiToken"), Settings.LmStudioApiToken, providerGroup, "provider", AiProviders.CompatibleIds),
                 Password("anthropicApiKey", _loc.T("settings.aiAnthropicKey"), Settings.AnthropicApiKey, providerGroup, "provider", Anthropic),
                 Text("anthropicModel", _loc.T("settings.aiAnthropicModel"), Settings.AnthropicModel, providerGroup, "provider", Anthropic, _availableModels),
                 Text("anthropicBaseUrl", _loc.T("settings.aiAnthropicBaseUrl"), Settings.AnthropicBaseUrl, providerGroup, "provider", Anthropic),
@@ -677,21 +659,9 @@ public sealed class AiAssistantExtension : IExtension, IStatusBarContributor, IR
                 ? Math.Clamp(n, min, max) : current;
 
         Settings.Enabled = ReadBool("enabled", Settings.Enabled);
-        Settings.Provider = ReadStr("provider", Settings.Provider);
-        Settings.LmStudioBaseUrl = ReadStr("lmStudioBaseUrl", Settings.LmStudioBaseUrl);
-        Settings.LmStudioModel = ReadStr("lmStudioModel", Settings.LmStudioModel);
-        Settings.LmStudioApiToken = ReadStr("lmStudioApiToken", Settings.LmStudioApiToken);
-        Settings.CopilotPath = ReadStr("copilotPath", Settings.CopilotPath);
-        Settings.CopilotModel = ReadStr("copilotModel", Settings.CopilotModel);
-        Settings.ClaudePath = ReadStr("claudePath", Settings.ClaudePath);
-        Settings.ClaudeModel = ReadStr("claudeModel", Settings.ClaudeModel);
-        Settings.AnthropicApiKey = ReadStr("anthropicApiKey", Settings.AnthropicApiKey);
-        Settings.AnthropicModel = ReadStr("anthropicModel", Settings.AnthropicModel);
-        Settings.AnthropicBaseUrl = ReadStr("anthropicBaseUrl", Settings.AnthropicBaseUrl);
-        // Picking a preset fills the base URL in; typing a URL by hand leaves it.
-        Settings.OpenAiCompatiblePreset = ReadStr("openAiCompatiblePreset", Settings.OpenAiCompatiblePreset);
-        if (AiSettings.BaseUrlForPreset(Settings.OpenAiCompatiblePreset) is { } presetUrl)
-            Settings.LmStudioBaseUrl = presetUrl;
+        var previousProvider = AiProviders.Selected(Settings);
+        AiProviders.ApplyConnection(Settings, values);
+        if (AiProviders.Selected(Settings) != previousProvider) _availableModels = [];
         Settings.Temperature = ReadNum("temperature", Settings.Temperature, 0, 2);
         Settings.ContextLength = ReadInt("contextLength", Settings.ContextLength, 0, 131072);
         Settings.TopP = ReadNum("topP", Settings.TopP, 0, 1);
@@ -734,12 +704,7 @@ public sealed class AiAssistantExtension : IExtension, IStatusBarContributor, IR
 
         // Reflect the form's (possibly unsaved) connection settings so the model
         // list matches what the user is about to save, then query the provider.
-        string Read(string key, string current) => values.TryGetValue(key, out var v) ? v : current;
-        Settings.Provider = Read("provider", Settings.Provider);
-        Settings.LmStudioBaseUrl = Read("lmStudioBaseUrl", Settings.LmStudioBaseUrl);
-        Settings.LmStudioApiToken = Read("lmStudioApiToken", Settings.LmStudioApiToken);
-        Settings.CopilotPath = Read("copilotPath", Settings.CopilotPath);
-        Settings.ClaudePath = Read("claudePath", Settings.ClaudePath);
+        AiProviders.ApplyConnection(Settings, values);
         ConfigureAiService();
 
         try
@@ -758,7 +723,6 @@ public sealed class AiAssistantExtension : IExtension, IStatusBarContributor, IR
         return GetSettingsSchema();
     }
 
-    private static readonly string[] LmStudio = ["lmstudio"];
     private static readonly string[] Anthropic = ["anthropic"];
     private static readonly string[] Copilot = ["copilot"];
     private static readonly string[] Claude = ["claude"];

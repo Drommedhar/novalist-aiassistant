@@ -145,9 +145,11 @@ Results are displayed as filterable findings you can browse by type or scene.
 All AI options are available under **Settings → AI / LLM**:
 
 - **Provider selection** — Choose between:
-  - **LM Studio / OpenAI-compatible** — any service that speaks the OpenAI chat protocol. An **Endpoint preset** drop-down fills in the address for LM Studio, Ollama, OpenAI, OpenRouter, Groq, DeepSeek, Mistral, Together and xAI, so you do not have to look the URL up. You can still type an address by hand for anything not listed.
+  - **LM Studio, Ollama, OpenAI, OpenRouter, Groq, DeepSeek, Mistral, Together AI or xAI** — select the service directly. Its default address appears in **Base URL**, which you can edit for a remote server or proxy. **Custom (OpenAI-compatible)** accepts other compatible endpoints. Model discovery and chat use the selected service's API; LM Studio's model loading is only used for LM Studio.
   - **Anthropic** — calls the Messages API directly with your own API key. Available models are fetched from the API rather than hardcoded, so a newly released model shows up without an extension update.
   - **GitHub Copilot CLI** or **Claude CLI** — drives the command-line tool as a subprocess.
+
+For Ollama, select **Ollama**, keep `http://localhost:11434/v1` (or enter your server's address), then use **Refresh** to choose a model already available on that server. Local Ollama does not need an API key; see [Ollama's compatibility documentation](https://docs.ollama.com/api/openai-compatibility).
 - **Model management** — Browse and select from loaded models, refresh the model list, and test your connection.
 - **Generation parameters** — Temperature, top-P, min-P, context length, frequency penalty, and repeat-last-N. These apply to the OpenAI-compatible providers. They are deliberately **not** sent to Anthropic: current Claude models reject them, so the request would fail rather than being merely ignored.
 - **Analysis checks** — Toggle which checks run during story analysis (entity references, inconsistencies, suggestions, scene stats).

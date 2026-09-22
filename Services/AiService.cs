@@ -12,6 +12,9 @@ namespace Novalist.Extensions.AiAssistant.Services;
 public class AiService : IAiService
 {
     private static readonly HttpClient SharedClient = new() { Timeout = TimeSpan.FromMinutes(10) };
+    private readonly HttpClient _http;
+
+    public AiService(HttpClient? http = null) => _http = http ?? SharedClient;
 
     private string _provider = "lmstudio";
     private string _baseUrl = "http://localhost:1234";
@@ -117,6 +120,10 @@ public class AiService : IAiService
     /// <summary>The Anthropic Messages API, talked to directly. Distinct from
     /// "claude", which drives the Claude CLI as a subprocess.</summary>
     private bool IsAnthropic => _provider == "anthropic";
+    private bool IsLmStudio => _provider == "lmstudio";
+    private string ModelsUrl => IsLmStudio
+        ? $"{AiProviders.LmStudioRoot(_baseUrl)}/api/v1/models"
+        : $"{AiProviders.ApiRoot(_baseUrl)}/models";
 
     /// <summary>The CLI providers each drive one subprocess with one in-flight
     /// prompt, so callers must run their scenes serially rather than fanning out.</summary>
@@ -130,14 +137,14 @@ public class AiService : IAiService
 
         // Invalidate the ensure-cache when relevant fields change so a fresh
         // probe runs on the next request.
-        if (_provider != settings.Provider || _baseUrl != settings.LmStudioBaseUrl.TrimEnd('/')
+        if (_provider != AiProviders.Selected(settings) || _baseUrl != settings.LmStudioBaseUrl.TrimEnd('/')
             || _model != settings.LmStudioModel || _contextLength != settings.ContextLength)
         {
             _ensuredModel = null;
             _ensuredContextLength = -1;
         }
 
-        _provider = settings.Provider;
+        _provider = AiProviders.Selected(settings);
         _baseUrl = settings.LmStudioBaseUrl.TrimEnd('/');
         _model = settings.LmStudioModel;
         _apiToken = settings.LmStudioApiToken;
@@ -182,9 +189,9 @@ public class AiService : IAiService
 
         try
         {
-            using var req = new HttpRequestMessage(HttpMethod.Get, $"{_baseUrl}/api/v1/models");
+            using var req = new HttpRequestMessage(HttpMethod.Get, ModelsUrl);
             AddAuth(req);
-            using var res = await SharedClient.SendAsync(req).ConfigureAwait(false);
+            using var res = await _http.SendAsync(req).ConfigureAwait(false);
             return res.IsSuccessStatusCode;
         }
         catch
@@ -226,14 +233,23 @@ public class AiService : IAiService
 
         try
         {
-            using var req = new HttpRequestMessage(HttpMethod.Get, $"{_baseUrl}/api/v1/models");
+            using var req = new HttpRequestMessage(HttpMethod.Get, ModelsUrl);
             AddAuth(req);
-            using var res = await SharedClient.SendAsync(req).ConfigureAwait(false);
+            using var res = await _http.SendAsync(req).ConfigureAwait(false);
             res.EnsureSuccessStatusCode();
             var json = await res.Content.ReadAsStringAsync().ConfigureAwait(false);
             using var doc = JsonDocument.Parse(json);
             var models = new List<AiModelInfo>();
-            if (doc.RootElement.TryGetProperty("models", out var arr))
+            if (!IsLmStudio && doc.RootElement.TryGetProperty("data", out var data))
+            {
+                foreach (var m in data.EnumerateArray())
+                {
+                    var id = m.TryGetProperty("id", out var key) ? key.GetString() : null;
+                    if (!string.IsNullOrWhiteSpace(id))
+                        models.Add(new AiModelInfo { Key = id, DisplayName = id });
+                }
+            }
+            else if (IsLmStudio && doc.RootElement.TryGetProperty("models", out var arr))
             {
                 foreach (var m in arr.EnumerateArray())
                 {
@@ -309,7 +325,7 @@ public class AiService : IAiService
 
     public async Task EnsureModelLoadedAsync()
     {
-        if (string.IsNullOrEmpty(LocalModel)) return;
+        if (!IsLmStudio || string.IsNullOrEmpty(LocalModel)) return;
 
         // Fast path: already verified for this (model, contextLength) — no I/O.
         if (_ensuredModel == LocalModel && _ensuredContextLength == _contextLength)
@@ -322,9 +338,9 @@ public class AiService : IAiService
             // load while we were waiting.
             if (_ensuredModel == LocalModel && _ensuredContextLength == _contextLength)
                 return;
-            using var req = new HttpRequestMessage(HttpMethod.Get, $"{_baseUrl}/api/v1/models");
+            using var req = new HttpRequestMessage(HttpMethod.Get, ModelsUrl);
             AddAuth(req);
-            using var res = await SharedClient.SendAsync(req).ConfigureAwait(false);
+            using var res = await _http.SendAsync(req).ConfigureAwait(false);
             res.EnsureSuccessStatusCode();
             var json = await res.Content.ReadAsStringAsync().ConfigureAwait(false);
             using var doc = JsonDocument.Parse(json);
@@ -391,20 +407,20 @@ public class AiService : IAiService
         if (_contextLength > 0)
             payload["context_length"] = _contextLength;
 
-        using var req = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}/api/v1/models/load");
+        using var req = new HttpRequestMessage(HttpMethod.Post, $"{AiProviders.LmStudioRoot(_baseUrl)}/api/v1/models/load");
         AddAuth(req);
         req.Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
-        using var res = await SharedClient.SendAsync(req).ConfigureAwait(false);
+        using var res = await _http.SendAsync(req).ConfigureAwait(false);
     }
 
     private async Task UnloadInstanceAsync(string instanceId)
     {
-        using var req = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}/api/v1/models/unload");
+        using var req = new HttpRequestMessage(HttpMethod.Post, $"{AiProviders.LmStudioRoot(_baseUrl)}/api/v1/models/unload");
         AddAuth(req);
         req.Content = new StringContent(
             JsonSerializer.Serialize(new { instance_id = instanceId }),
             Encoding.UTF8, "application/json");
-        using var res = await SharedClient.SendAsync(req).ConfigureAwait(false);
+        using var res = await _http.SendAsync(req).ConfigureAwait(false);
     }
 
     // ── Chat generation with SSE streaming ──────────────────────────
@@ -440,16 +456,19 @@ public class AiService : IAiService
             ["stream"] = true,
             ["temperature"] = temperature ?? _temperature,
             ["top_p"] = _topP,
-            ["min_p"] = _minP,
             ["frequency_penalty"] = _frequencyPenalty,
-            ["repeat_last_n"] = _repeatLastN,
         };
+        if (IsLmStudio)
+        {
+            body["min_p"] = _minP;
+            body["repeat_last_n"] = _repeatLastN;
+        }
 
-        using var req = new HttpRequestMessage(HttpMethod.Post, $"{_baseUrl}/v1/chat/completions");
+        using var req = new HttpRequestMessage(HttpMethod.Post, $"{AiProviders.ApiRoot(_baseUrl)}/chat/completions");
         AddAuth(req);
         req.Content = new StringContent(JsonSerializer.Serialize(body), Encoding.UTF8, "application/json");
 
-        using var res = await SharedClient.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+        using var res = await _http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
         res.EnsureSuccessStatusCode();
 
         using var stream = await res.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);

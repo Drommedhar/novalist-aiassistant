@@ -5,6 +5,9 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Remove="tests\**\*.cs" />
+  </ItemGroup>
+  <ItemGroup>
     <Content Include="extension.json" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Locales\*.json" CopyToOutputDirectory="PreserveNewest" Link="Locales\%(Filename)%(Extension)" />
     <Content Include="web\*.html" CopyToOutputDirectory="PreserveNewest" Link="web\%(Filename)%(Extension)" />
@@ -19,7 +22,7 @@
   <ItemGroup>
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.0" />
   </ItemGroup>
-  <Target Name="DeployExtension" AfterTargets="Build" Condition="'$(OS)' == 'Windows_NT'">
+  <Target Name="DeployExtension" AfterTargets="Build" Condition="'$(OS)' == 'Windows_NT' and '$(SkipExtensionDeploy)' != 'true'">
     <PropertyGroup>
       <ExtensionDeployDir>$(APPDATA)\Novalist\Extensions\AiAssistant</ExtensionDeployDir>
     </PropertyGroup>
@@ -42,7 +45,7 @@
           SkipUnchangedFiles="true" />
   </Target>
 
-  <Target Name="DeployExtensionMac" AfterTargets="Build" Condition="'$(OS)' != 'Windows_NT'">
+  <Target Name="DeployExtensionMac" AfterTargets="Build" Condition="'$(OS)' != 'Windows_NT' and '$(SkipExtensionDeploy)' != 'true'">
     <PropertyGroup>
       <ExtensionDeployDir>$(HOME)/Library/Application Support/Novalist/Extensions/AiAssistant</ExtensionDeployDir>
     </PropertyGroup>

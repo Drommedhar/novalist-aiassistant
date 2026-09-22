@@ -215,8 +215,10 @@
     "aiAnthropicKeyDesc": "Für den Anbieter Anthropic, der die Messages-API direkt aufruft statt ein Kommandozeilenwerkzeug zu starten.",
     "aiAnthropicModel": "Anthropic-Modell",
     "aiApiToken": "API-Token",
-    "aiApiTokenDesc": "Optionales Bearer-Token für die LM Studio-Authentifizierung.",
-    "aiBaseUrl": "LM Studio Basis-URL",
+    "aiApiTokenDesc": "API-Schlüssel für den ausgewählten Dienst. Lokale Server benötigen normalerweise keinen.",
+    "aiBaseUrl": "Basis-URL",
+    "aiCustomProvider": "Benutzerdefiniert (OpenAI-kompatibel)",
+    "aiProviderDesc": "Die Auswahl eines Dienstes trägt seine Standardadresse ein. Für einen anderen Server oder Proxy kannst du die Adresse ändern.",
     "aiCheckInconsistencies": "Inkonsistenzen erkennen",
     "aiCheckReferences": "Entitäts-Referenzen erkennen",
     "aiCheckSceneStats": "Szenen-Statistiken generieren",
@@ -241,8 +243,6 @@
     "aiModelPlaceholder": "z.B. qwen2.5-7b-instruct",
     "aiNotReachable": "✗ Nicht erreichbar",
     "aiParameters": "Generierungsparameter",
-    "aiPreset": "Endpunkt-Vorlage",
-    "aiPresetDesc": "Traegt die Basis-URL eines bekannten OpenAI-kompatiblen Dienstes ein. Alle sprechen dasselbe Protokoll wie LM Studio, nur die Adresse unterscheidet sich. Ohne Auswahl bleibt eine selbst eingetragene Adresse erhalten.",
     "aiProvider": "Anbieter",
     "aiRefreshModels": "Aktualisieren",
     "aiRepeatLastN": "Wiederholung letzte N",
@@ -315,6 +315,11 @@
         "title": "Copilot-CLI-Pfad"
       },
       "description": "Wähle einen Anbieter und gib nur das Nötigste ein, um loszulegen.",
+      "endpoint": {
+        "help": "Verwende die Standardadresse oder gib die Adresse deines Servers ein.",
+        "modelHelp": "Wähle ein Modell des ausgewählten Dienstes.",
+        "errorStatus": "Der Server antwortete mit {0} {1}. Prüfe die Adresse und den API-Schlüssel."
+      },
       "displayName": "KI-Assistent — Einrichtung",
       "enabled": {
         "help": "Hauptschalter. Du kannst ihn später in Einstellungen → KI wieder umlegen.",
@@ -340,7 +345,7 @@
       "provider": {
         "copilot": "GitHub Copilot CLI",
         "copilotDesc": "Nutzt die copilot-Datei aus dem PATH. Benötigt ein Copilot-Abo.",
-        "help": "LM Studio führt ein Modell lokal aus. GitHub Copilot CLI ist cloudbasiert und benötigt eine copilot-Datei im PATH.",
+        "help": "Wähle deinen lokalen KI-Server, Cloud-Dienst oder ein Kommandozeilenprogramm.",
         "lmstudio": "LM Studio (lokal)",
         "lmstudioDesc": "Kostenlos, privat, nutzt ein in LM Studio geladenes Modell auf deinem Rechner.",
         "title": "Welcher Anbieter?",

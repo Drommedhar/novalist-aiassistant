@@ -1,7 +1,7 @@
 {
   "id": "com.novalist.ai",
   "name": "AI Assistant",
-  "description": "AI chat with an explicit context picker, editorial critique left as margin comments from the reader you choose, a story bible built from your own prose, outlining from a premise, your own prompt library, story analysis and scene statistics. Supports LM Studio and GitHub Copilot CLI.",
+  "description": "AI chat with an explicit context picker, editorial critique left as margin comments from the reader you choose, a story bible built from your own prose, outlining from a premise, your own prompt library, story analysis and scene statistics. Supports LM Studio, Ollama, OpenAI-compatible services, Anthropic API, GitHub Copilot CLI and Claude Code CLI.",
   "version": "3.0",
   "author": "Novalist Team",
   "entryAssembly": "Novalist.Extensions.AiAssistant.dll",

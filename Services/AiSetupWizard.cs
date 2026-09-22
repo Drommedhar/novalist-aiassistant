@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net.Http;
-using System.Text.Json;
 using System.Threading.Tasks;
 using Novalist.Sdk.Models;
 using Novalist.Sdk.Models.Wizards;
@@ -48,56 +47,37 @@ public static class AiSetupWizard
                 {
                     Id = "provider",
                     Title = T("wizard.ai.provider.title", "Which provider?"),
-                    Help = T("wizard.ai.provider.help", "LM Studio runs a model locally. GitHub Copilot CLI is cloud-hosted and needs a copilot binary on PATH."),
+                    Help = T("wizard.ai.provider.help", "Choose your local AI server, hosted service, or command-line tool."),
                     Skippable = false,
                     VisibleWhen = new WizardCondition { StepId = "enabled", Operator = "equals", Value = "true" },
-                    Choices =
-                    [
-                        new WizardChoice
-                        {
-                            Value = "lmstudio",
-                            Label = T("wizard.ai.provider.lmstudio", "LM Studio (local)"),
-                            Description = T("wizard.ai.provider.lmstudioDesc", "Free, private, runs against a model loaded in LM Studio on your machine."),
-                        },
-                        new WizardChoice
-                        {
-                            Value = "copilot",
-                            Label = T("wizard.ai.provider.copilot", "GitHub Copilot CLI"),
-                            Description = T("wizard.ai.provider.copilotDesc", "Uses the copilot binary on PATH. Requires a Copilot subscription."),
-                        },
-                        new WizardChoice
-                        {
-                            Value = "claude",
-                            Label = T("wizard.ai.provider.claude", "Claude Code CLI"),
-                            Description = T("wizard.ai.provider.claudeDesc", "Uses the claude binary on PATH. Fast; runs on your own Claude subscription or API key."),
-                        },
-                    ],
+                    Choices = AiProviders.Labels.Select(p => new WizardChoice
+                    {
+                        Value = p.Key,
+                        Label = p.Key == "custom" ? T("settings.aiCustomProvider", p.Value) : p.Value,
+                    }).ToList(),
                 },
+
+                .. CompatibleSteps(loc),
 
                 new TextStep
                 {
-                    Id = "lmStudioBaseUrl",
-                    Title = T("wizard.ai.lmStudioUrl.title", "LM Studio base URL"),
-                    Help = T("wizard.ai.lmStudioUrl.help", "Where LM Studio's local server is reachable. Default works out of the box."),
-                    Placeholder = "http://localhost:1234",
-                    VisibleWhen = new WizardCondition { StepId = "provider", Operator = "equals", Value = "lmstudio" },
-                    Validator = async r => await ValidateLmStudioUrlAsync(r.GetText("lmStudioBaseUrl"), loc),
-                },
-                new ChoiceStep
-                {
-                    Id = "lmStudioModel",
-                    Title = T("wizard.ai.lmStudioModel.title", "Model"),
-                    Help = T("wizard.ai.lmStudioModel.help", "Pick a model loaded in LM Studio. The list is fetched from the server you just confirmed."),
-                    VisibleWhen = new WizardCondition { StepId = "provider", Operator = "equals", Value = "lmstudio" },
-                    AutoSkipIfChoicesEmpty = true,
-                    DynamicChoicesProvider = async r => await FetchLmStudioModelsAsync(r.GetText("lmStudioBaseUrl")),
+                    Id = "anthropicBaseUrl",
+                    Title = T("settings.aiAnthropicBaseUrl", "Anthropic API address"),
+                    Placeholder = "https://api.anthropic.com",
+                    VisibleWhen = new WizardCondition { StepId = "provider", Value = "anthropic" },
                 },
                 new TextStep
                 {
-                    Id = "lmStudioApiToken",
-                    Title = T("wizard.ai.lmStudioToken.title", "API token (optional)"),
-                    Help = T("wizard.ai.lmStudioToken.help", "Most local LM Studio installs do not require a token. Leave empty to skip."),
-                    VisibleWhen = new WizardCondition { StepId = "provider", Operator = "equals", Value = "lmstudio" },
+                    Id = "anthropicApiKey",
+                    Title = T("settings.aiAnthropicKey", "Anthropic API key"),
+                    Skippable = false,
+                    VisibleWhen = new WizardCondition { StepId = "provider", Value = "anthropic" },
+                },
+                new TextStep
+                {
+                    Id = "anthropicModel",
+                    Title = T("settings.aiAnthropicModel", "Anthropic model"),
+                    VisibleWhen = new WizardCondition { StepId = "provider", Value = "anthropic" },
                 },
 
                 new TextStep
@@ -152,103 +132,129 @@ public static class AiSetupWizard
         settings.Enabled = enabled;
         if (!enabled) return true;
 
-        var provider = result.GetText("provider");
-        if (!string.IsNullOrWhiteSpace(provider))
-            settings.Provider = provider;
-
-        if (string.Equals(provider, "lmstudio", System.StringComparison.OrdinalIgnoreCase))
+        var provider = result.GetText("provider") ?? AiProviders.Selected(settings);
+        var values = new Dictionary<string, string> { ["provider"] = provider };
+        if (AiProviders.IsCompatible(provider))
         {
-            var url = result.GetText("lmStudioBaseUrl");
-            if (!string.IsNullOrWhiteSpace(url)) settings.LmStudioBaseUrl = url;
-            var model = result.GetText("lmStudioModel");
-            if (!string.IsNullOrWhiteSpace(model)) settings.LmStudioModel = model;
-            var tok = result.GetText("lmStudioApiToken");
-            settings.LmStudioApiToken = tok ?? string.Empty;
+            var url = result.GetText(FieldId(provider, "BaseUrl"));
+            values["lmStudioBaseUrl"] = !string.IsNullOrWhiteSpace(url) ? url
+                : provider == AiProviders.Selected(settings) ? settings.LmStudioBaseUrl
+                : AiSettings.BaseUrlForPreset(provider) ?? settings.LmStudioBaseUrl;
+            values["lmStudioModel"] = result.GetText(FieldId(provider, "Model")) ?? string.Empty;
+            values["lmStudioApiToken"] = result.GetText(FieldId(provider, "ApiToken")) ?? string.Empty;
         }
-        else if (string.Equals(provider, "copilot", System.StringComparison.OrdinalIgnoreCase))
+        else
         {
-            var path = result.GetText("copilotPath");
-            if (!string.IsNullOrWhiteSpace(path)) settings.CopilotPath = path;
-            var model = result.GetText("copilotModel");
-            settings.CopilotModel = model ?? string.Empty;
+            foreach (var key in new[] { "copilotPath", "copilotModel", "claudePath", "claudeModel",
+                "anthropicBaseUrl", "anthropicApiKey", "anthropicModel" })
+            {
+                var value = result.GetText(key);
+                if (value != null) values[key] = value;
+            }
         }
-        else if (string.Equals(provider, "claude", System.StringComparison.OrdinalIgnoreCase))
-        {
-            var path = result.GetText("claudePath");
-            if (!string.IsNullOrWhiteSpace(path)) settings.ClaudePath = path;
-            var model = result.GetText("claudeModel");
-            if (!string.IsNullOrWhiteSpace(model)) settings.ClaudeModel = model;
-        }
+        AiProviders.ApplyConnection(settings, values);
 
         var lang = result.GetText("responseLanguage");
         settings.ResponseLanguage = lang ?? string.Empty;
         return true;
     }
 
-    // ── LM Studio probes ────────────────────────────────────────────
+    private static string FieldId(string provider, string suffix) =>
+        (provider == "lmstudio" ? "lmStudio" : provider) + suffix;
 
-    /// <summary>Returns null on success, error message on failure. Used as the
-    /// step's Validator so Next is blocked until LM Studio is reachable.</summary>
-    public static async Task<string?> ValidateLmStudioUrlAsync(string? url, Func<string, string>? loc = null)
+    public static WizardResult CreateSeed(AiSettings settings)
+    {
+        var provider = AiProviders.Selected(settings);
+        var seed = new WizardResult { DefinitionId = Id };
+        void Set(string key, string value) => seed.Answers[key] = new WizardAnswer { Text = value };
+        Set("enabled", settings.Enabled ? "true" : "false");
+        Set("provider", provider);
+        foreach (var id in AiProviders.CompatibleIds)
+        {
+            Set(FieldId(id, "BaseUrl"), id == provider ? settings.LmStudioBaseUrl : AiSettings.BaseUrlForPreset(id) ?? "");
+            if (id != provider) continue;
+            Set(FieldId(id, "Model"), settings.LmStudioModel);
+            Set(FieldId(id, "ApiToken"), settings.LmStudioApiToken);
+        }
+        Set("copilotPath", settings.CopilotPath);
+        Set("copilotModel", settings.CopilotModel);
+        Set("claudePath", settings.ClaudePath);
+        Set("claudeModel", settings.ClaudeModel);
+        Set("anthropicBaseUrl", settings.AnthropicBaseUrl);
+        Set("anthropicApiKey", settings.AnthropicApiKey);
+        Set("anthropicModel", settings.AnthropicModel);
+        Set("responseLanguage", settings.ResponseLanguage);
+        return seed;
+    }
+
+    private static IEnumerable<WizardStep> CompatibleSteps(Func<string, string>? loc)
     {
         string T(string key, string fallback) => loc?.Invoke(key) is { } v && v != key ? v : fallback;
-
-        var baseUrl = string.IsNullOrWhiteSpace(url) ? "http://localhost:1234" : url.TrimEnd('/');
-        try
+        foreach (var provider in AiProviders.CompatibleIds)
         {
-            using var req = new HttpRequestMessage(HttpMethod.Get, $"{baseUrl}/api/v1/models");
-            using var res = await _http.SendAsync(req).ConfigureAwait(false);
-            if (!res.IsSuccessStatusCode)
-                return string.Format(
-                    T("wizard.ai.lmStudioUrl.errorStatus", "LM Studio responded {0} {1} at {2}/api/v1/models. Is the local server enabled?"),
-                    (int)res.StatusCode, res.ReasonPhrase, baseUrl);
-            return null;
-        }
-        catch (TaskCanceledException)
-        {
-            return string.Format(
-                T("wizard.ai.lmStudioUrl.errorTimeout", "Connection to {0} timed out. Is LM Studio running and the server enabled?"),
-                baseUrl);
-        }
-        catch (Exception ex)
-        {
-            return string.Format(
-                T("wizard.ai.lmStudioUrl.errorReach", "Cannot reach {0}: {1}"),
-                baseUrl, ex.Message);
+            var urlId = FieldId(provider, "BaseUrl");
+            var tokenId = FieldId(provider, "ApiToken");
+            var condition = new WizardCondition { StepId = "provider", Value = provider };
+            string Url(WizardResult result) => string.IsNullOrWhiteSpace(result.GetText(urlId))
+                ? AiSettings.BaseUrlForPreset(provider) ?? "" : result.GetText(urlId)!;
+            yield return new TextStep
+            {
+                Id = urlId,
+                Title = T("settings.aiBaseUrl", "Base URL"),
+                Help = T("wizard.ai.endpoint.help", "Use the default address or enter the address of your server."),
+                Placeholder = AiSettings.BaseUrlForPreset(provider),
+                Skippable = provider != "custom",
+                VisibleWhen = condition,
+            };
+            yield return new TextStep
+            {
+                Id = tokenId,
+                Title = T("settings.aiApiToken", "API token"),
+                Help = T("settings.aiApiTokenDesc", "API key for the selected service. Local servers usually do not require one."),
+                VisibleWhen = condition,
+                Validator = r => ValidateEndpointAsync(provider, Url(r), r.GetText(tokenId), loc),
+            };
+            yield return new ChoiceStep
+            {
+                Id = FieldId(provider, "Model"),
+                Title = T("settings.aiModel", "Model"),
+                Help = T("wizard.ai.endpoint.modelHelp", "Choose a model available from the selected service."),
+                VisibleWhen = condition,
+                AutoSkipIfChoicesEmpty = true,
+                DynamicChoicesProvider = r => FetchModelsAsync(provider, Url(r), r.GetText(tokenId)),
+            };
         }
     }
 
-    /// <summary>Lists the LLM models currently exposed by the LM Studio server
-    /// at the given URL. Used as the DynamicChoicesProvider for the model step;
-    /// returns empty when nothing is loaded so the step auto-skips.</summary>
-    public static async Task<IReadOnlyList<WizardChoice>> FetchLmStudioModelsAsync(string? url)
+    public static async Task<string?> ValidateEndpointAsync(
+        string provider, string url, string? token = null, Func<string, string>? loc = null)
     {
-        var baseUrl = string.IsNullOrWhiteSpace(url) ? "http://localhost:1234" : url.TrimEnd('/');
+        string T(string key, string fallback) => loc?.Invoke(key) is { } v && v != key ? v : fallback;
+        var endpoint = provider == "lmstudio"
+            ? $"{AiProviders.LmStudioRoot(url)}/api/v1/models"
+            : $"{AiProviders.ApiRoot(url)}/models";
         try
         {
-            using var req = new HttpRequestMessage(HttpMethod.Get, $"{baseUrl}/api/v1/models");
+            using var req = new HttpRequestMessage(HttpMethod.Get, endpoint);
+            if (!string.IsNullOrWhiteSpace(token))
+                req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
             using var res = await _http.SendAsync(req).ConfigureAwait(false);
-            if (!res.IsSuccessStatusCode) return Array.Empty<WizardChoice>();
-            var json = await res.Content.ReadAsStringAsync().ConfigureAwait(false);
-            using var doc = JsonDocument.Parse(json);
-            var list = new List<WizardChoice>();
-            if (doc.RootElement.TryGetProperty("models", out var arr))
-            {
-                foreach (var m in arr.EnumerateArray())
-                {
-                    var type = m.TryGetProperty("type", out var t) ? t.GetString() : null;
-                    if (type != "llm") continue;
-                    var key = m.TryGetProperty("key", out var k) ? k.GetString() ?? string.Empty : string.Empty;
-                    var display = m.TryGetProperty("display_name", out var dn) ? dn.GetString() ?? key : key;
-                    if (string.IsNullOrEmpty(key)) continue;
-                    list.Add(new WizardChoice { Value = key, Label = display });
-                }
-            }
-            return list;
+            return res.IsSuccessStatusCode ? null : string.Format(
+                T("wizard.ai.endpoint.errorStatus", "The server responded {0} {1}. Check the address and API key."),
+                (int)res.StatusCode, res.ReasonPhrase);
         }
-        catch
+        catch (Exception ex)
         {
-            return Array.Empty<WizardChoice>();
+            return string.Format(T("wizard.ai.lmStudioUrl.errorReach", "Cannot reach {0}: {1}"), url, ex.Message);
         }
+    }
+
+    public static async Task<IReadOnlyList<WizardChoice>> FetchModelsAsync(string provider, string url, string? token = null)
+    {
+        var service = new AiService(_http);
+        service.Configure(new AiSettings { Provider = provider, LmStudioBaseUrl = url, LmStudioApiToken = token ?? "" });
+        return (await service.ListModelsAsync().ConfigureAwait(false))
+            .Select(m => new WizardChoice { Value = m.Key, Label = string.IsNullOrEmpty(m.DisplayName) ? m.Key : m.DisplayName })
+            .ToList();
     }
 }

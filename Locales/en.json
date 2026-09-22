@@ -215,8 +215,10 @@
     "aiAnthropicKeyDesc": "Used with the Anthropic provider, which calls the Messages API directly rather than driving a command-line tool.",
     "aiAnthropicModel": "Anthropic model",
     "aiApiToken": "API Token",
-    "aiApiTokenDesc": "Optional bearer token for LM Studio authentication.",
-    "aiBaseUrl": "LM Studio Base URL",
+    "aiApiTokenDesc": "API key for the selected service. Local servers usually do not require one.",
+    "aiBaseUrl": "Base URL",
+    "aiCustomProvider": "Custom (OpenAI-compatible)",
+    "aiProviderDesc": "Selecting a service fills in its default address. You can edit the address for a remote server or proxy.",
     "aiCheckInconsistencies": "Detect inconsistencies",
     "aiCheckReferences": "Detect entity references",
     "aiCheckSceneStats": "Generate scene statistics",
@@ -241,8 +243,6 @@
     "aiModelPlaceholder": "e.g. qwen2.5-7b-instruct",
     "aiNotReachable": "✗ Not reachable",
     "aiParameters": "Generation Parameters",
-    "aiPreset": "Endpoint preset",
-    "aiPresetDesc": "Fills in the base URL for a known OpenAI-compatible service. Every one of these speaks the same protocol as LM Studio, so only the address differs. Leave the URL alone to keep a hand-typed address.",
     "aiProvider": "Provider",
     "aiRefreshModels": "Refresh",
     "aiRepeatLastN": "Repeat Last N",
@@ -315,6 +315,11 @@
         "title": "Copilot CLI path"
       },
       "description": "Pick a provider and fill in just enough to start chatting.",
+      "endpoint": {
+        "help": "Use the default address or enter the address of your server.",
+        "modelHelp": "Choose a model available from the selected service.",
+        "errorStatus": "The server responded {0} {1}. Check the address and API key."
+      },
       "displayName": "AI Assistant — setup",
       "enabled": {
         "help": "Master toggle. You can flip this off later in Settings → AI.",
@@ -340,7 +345,7 @@
       "provider": {
         "copilot": "GitHub Copilot CLI",
         "copilotDesc": "Uses the copilot binary on PATH. Requires a Copilot subscription.",
-        "help": "LM Studio runs a model locally. GitHub Copilot CLI is cloud-hosted and needs a copilot binary on PATH.",
+        "help": "Choose your local AI server, hosted service, or command-line tool.",
         "lmstudio": "LM Studio (local)",
         "lmstudioDesc": "Free, private, runs against a model loaded in LM Studio on your machine.",
         "title": "Which provider?",
