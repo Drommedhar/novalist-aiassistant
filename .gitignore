@@ -35,3 +35,4 @@ artifacts/
 # Visual Studio
 .vs/
 .dual-graph/
+__pycache__/

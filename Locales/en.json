@@ -1,4 +1,23 @@
 {
+  "dictation": {
+    "settingsGroup": "Dictation",
+    "enabled": "Enable local dictation",
+    "acceleration": "Acceleration",
+    "automatic": "Automatic",
+    "accelerationHelp": "Automatic selects CUDA, supported ROCm hardware, or MLX on native Apple Silicon; otherwise CPU. Both speech and dialogue detection use the selected accelerator. Download / repair after changing it. GPU modes need a compatible graphics driver; choose CPU if unavailable. Model download sizes vary by backend.",
+    "model": "Speech recognition model",
+    "dialogueModel": "Dialogue detection model",
+    "help": "Dictate in English or German directly into the editor. Both models run on this computer, independently of the chat provider. Download them once, then dictate offline. Qwen3 4B improves dialogue detection; 1.7B uses less memory. Runtime files and a prepared model copy need additional disk space.",
+    "prepare": "Download / repair dictation models",
+    "preparing": "Preparing local dictation. Follow progress in the download panel.",
+    "ready": "Local dictation is ready. Open a scene and choose Dictate in the editor toolbar.",
+    "notReady": "Download the selected models before starting dictation. Internet is needed only for setup.",
+    "runtime": "Preparing the local dictation runtime…",
+    "packages": "Installing dictation dependencies…",
+    "models": "Downloading and checking local models…",
+    "cancelled": "Dictation setup cancelled. Download again to resume.",
+    "failed": "Local dictation setup failed."
+  },
   "ai": {
     "addToCodex": "Add to Codex",
     "addToCodexFailed": "Could not add \"{0}\" to the Codex.",

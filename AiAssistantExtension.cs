@@ -8,7 +8,7 @@ using Novalist.Sdk.Services;
 
 namespace Novalist.Extensions.AiAssistant;
 
-public sealed class AiAssistantExtension : IExtension, IStatusBarContributor, IRibbonContributor, ISettingsSchemaContributor, IGrammarCheckContributor, IArticleGeneratorContributor, IEntityExtractionContributor, IContextMenuContributor, IWizardContributor, Novalist.Sdk.Hooks.IWebViewContributor
+public sealed class AiAssistantExtension : IExtension, IStatusBarContributor, IRibbonContributor, ISettingsSchemaContributor, IGrammarCheckContributor, IArticleGeneratorContributor, IEntityExtractionContributor, IContextMenuContributor, IWizardContributor, IDictationContributor, Novalist.Sdk.Hooks.IWebViewContributor
 {
     public string Id => "com.novalist.ai";
     public string DisplayName => "AI Assistant";
@@ -39,6 +39,20 @@ public sealed class AiAssistantExtension : IExtension, IStatusBarContributor, IR
     private IExtensionLocalization _loc = null!;
     internal Services.AiService AiService { get; } = new();
     internal AiSettings Settings { get; private set; } = new();
+    private readonly LocalDictationRuntime _dictationRuntime = new();
+    private DictationService? _dictation;
+    public string DictationId => Id;
+    public string DictationName => "AI Assistant";
+    public bool IsDictationAvailable => _dictation?.IsConfigured(Settings) == true;
+    public string AudioDestination => "Whisper " + Settings.DictationModel;
+    public string FormattingDestination => "Qwen3 " + Settings.DictationDialogueModel;
+    public Task<string> TranscribeAsync(byte[] audio, string mimeType, string language, CancellationToken cancellationToken = default)
+        => _dictation!.TranscribeAsync(Settings, audio, mimeType, language, cancellationToken);
+
+    public Task<IReadOnlyList<DictationSegment>> DetectDialogueAsync(string transcript, string language, string precedingText,
+        CancellationToken cancellationToken = default)
+        => _dictation!.DetectDialogueAsync(Settings, transcript, language, precedingText, cancellationToken);
+    private Task? _dictationPreparation;
     private AiGrammarCheckService? _grammarCheckService;
     private CharacterKnowledgeService? _knowledgeService;
     private KnowledgeBuilder? _knowledgeBuilder;
@@ -135,6 +149,12 @@ public sealed class AiAssistantExtension : IExtension, IStatusBarContributor, IR
         _loc = host.GetLocalization(Id);
 
         LoadSettings();
+        _dictation = new DictationService(_dictationRuntime);
+        // Ignore obsolete endpoint-era model names if an earlier development
+        // build saved them; they must never become download URLs or paths.
+        if (!LocalDictationRuntime.SpeechModels.Contains(Settings.DictationModel)) Settings.DictationModel = "small";
+        if (!LocalDictationRuntime.DialogueModels.Contains(Settings.DictationDialogueModel)) Settings.DictationDialogueModel = "4B";
+        if (!DictationHardware.Choices.Contains(Settings.DictationAcceleration)) Settings.DictationAcceleration = "auto";
         ConfigureAiService();
         _grammarCheckService = new AiGrammarCheckService(AiService);
         _grammarCheckService.IsGrammarCheckEnabled = Settings.GrammarCheckEnabled;
@@ -180,6 +200,7 @@ public sealed class AiAssistantExtension : IExtension, IStatusBarContributor, IR
             // user has context.
             if (!_setupWizardChecked
                 && !Settings.Enabled
+                && !IsDictationAvailable
                 && string.IsNullOrWhiteSpace(Settings.LmStudioModel)
                 && string.IsNullOrWhiteSpace(Settings.CopilotModel))
             {
@@ -470,6 +491,7 @@ public sealed class AiAssistantExtension : IExtension, IStatusBarContributor, IR
     public void Shutdown()
     {
         _host.LanguageChanged -= OnLanguageChanged;
+        _dictationRuntime.Dispose();
     }
 
     // ── IWizardContributor ──────────────────────────────────────────
@@ -593,6 +615,7 @@ public sealed class AiAssistantExtension : IExtension, IStatusBarContributor, IR
     public SettingsSchema GetSettingsSchema()
     {
         var providerGroup = _loc.T("settings.aiConnection");
+        var dictationGroup = _loc.T("dictation.settingsGroup");
         var paramsGroup = _loc.T("settings.aiParameters");
         var checksGroup = _loc.T("settings.aiAnalysisChecks");
         var knowledgeGroup = _loc.T("settings.knowledgeSection");
@@ -602,6 +625,32 @@ public sealed class AiAssistantExtension : IExtension, IStatusBarContributor, IR
             Title = _loc.T("settings.ai"),
             Fields =
             [
+                Bool("dictationEnabled", _loc.T("dictation.enabled"), Settings.DictationEnabled, dictationGroup, _loc.T("dictation.help")),
+                new SettingsField { Key = "dictationAcceleration", Label = _loc.T("dictation.acceleration"),
+                    Type = SettingsFieldType.Select, Value = Settings.DictationAcceleration, Group = dictationGroup,
+                    Help = _loc.T("dictation.accelerationHelp"), Options = DictationHardware.Choices,
+                    OptionLabels = new Dictionary<string, string> {
+                        ["auto"] = _loc.T("dictation.automatic") + " (" + DictationHardware.Automatic.ToUpperInvariant() + ")",
+                        ["cpu"] = "CPU", ["cuda"] = "NVIDIA CUDA", ["rocm"] = "AMD ROCm", ["mlx"] = "Apple Silicon (MLX)"
+                    } },
+                new SettingsField { Key = "dictationModel", Label = _loc.T("dictation.model"),
+                    Type = SettingsFieldType.Select, Value = Settings.DictationModel, Group = dictationGroup,
+                    Options = LocalDictationRuntime.SpeechModels, OptionLabels = new Dictionary<string, string>
+                    {
+                        ["base"] = "Whisper Base (~150–300 MB)", ["small"] = "Whisper Small (~500 MB–1 GB)",
+                        ["medium"] = "Whisper Medium (~1.5–3.1 GB)", ["large-v3"] = "Whisper Large v3 (~3.1 GB)"
+                    } },
+                new SettingsField { Key = "dictationDialogueModel", Label = _loc.T("dictation.dialogueModel"),
+                    Type = SettingsFieldType.Select, Value = Settings.DictationDialogueModel, Group = dictationGroup,
+                    Options = LocalDictationRuntime.DialogueModels, OptionLabels = new Dictionary<string, string>
+                    {
+                        ["1.7B"] = "Qwen3 1.7B (~3.5 GB)", ["4B"] = "Qwen3 4B (~8 GB)"
+                    } },
+                new SettingsField { Key = "prepareDictation", Label = _loc.T("dictation.prepare"),
+                    Type = SettingsFieldType.Action, Group = dictationGroup,
+                    Help = _loc.T(_dictationPreparation is { IsCompleted: false } ? "dictation.preparing"
+                        : _dictationRuntime.IsReady(Settings.DictationModel, Settings.DictationDialogueModel, Settings.DictationAcceleration)
+                            ? "dictation.ready" : "dictation.notReady") },
                 Bool("enabled", _loc.T("settings.aiEnabled"), Settings.Enabled, providerGroup, _loc.T("settings.aiEnabledDesc")),
                 new SettingsField
                 {
@@ -659,6 +708,15 @@ public sealed class AiAssistantExtension : IExtension, IStatusBarContributor, IR
                 ? Math.Clamp(n, min, max) : current;
 
         Settings.Enabled = ReadBool("enabled", Settings.Enabled);
+        Settings.DictationEnabled = ReadBool("dictationEnabled", Settings.DictationEnabled);
+        var speechModel = ReadStr("dictationModel", Settings.DictationModel);
+        var dialogueModel = ReadStr("dictationDialogueModel", Settings.DictationDialogueModel);
+        var acceleration = ReadStr("dictationAcceleration", Settings.DictationAcceleration);
+        if (!DictationHardware.Choices.Contains(acceleration)) throw new ArgumentException("Choose a supported dictation accelerator.");
+        LocalDictationRuntime.ValidateModels(speechModel, dialogueModel);
+        Settings.DictationModel = speechModel;
+        Settings.DictationDialogueModel = dialogueModel;
+        Settings.DictationAcceleration = acceleration;
         var previousProvider = AiProviders.Selected(Settings);
         AiProviders.ApplyConnection(Settings, values);
         if (AiProviders.Selected(Settings) != previousProvider) _availableModels = [];
@@ -695,6 +753,15 @@ public sealed class AiAssistantExtension : IExtension, IStatusBarContributor, IR
 
     public async Task<SettingsSchema?> ExecuteSchemaActionAsync(string actionKey, IReadOnlyDictionary<string, string> values)
     {
+        if (actionKey == "prepareDictation")
+        {
+            await ApplySettingsAsync(values);
+            // Return promptly: schema actions hold the workspace RPC gate.
+            // The progress handle owns cancellation while installation runs.
+            if (_dictationPreparation is not { IsCompleted: false })
+                _dictationPreparation = PrepareDictationAsync(Settings.DictationModel, Settings.DictationDialogueModel, Settings.DictationAcceleration);
+            return GetSettingsSchema();
+        }
         if (actionKey == "buildStyleProfile")
         {
             await BuildStyleProfileAsync();
@@ -721,6 +788,26 @@ public sealed class AiAssistantExtension : IExtension, IStatusBarContributor, IR
             _availableModels = [];
         }
         return GetSettingsSchema();
+    }
+
+    private async Task PrepareDictationAsync(string speech, string dialogue, string acceleration)
+    {
+        using var progress = _host.ShowBusyProgress(new BusyProgressOptions
+        {
+            Title = _loc.T("dictation.prepare"), InitialStatus = _loc.T("dictation.runtime"),
+            AllowCancel = true, IsModal = false
+        });
+        try
+        {
+            await _dictationRuntime.PrepareAsync(speech, dialogue, (step, detail) =>
+            {
+                progress.SetStatus(_loc.T("dictation." + step));
+                progress.SetDetails(string.IsNullOrEmpty(detail) ? [] : [detail]);
+            }, progress.CancellationToken, acceleration);
+            _host.ShowNotification(_loc.T("dictation.ready"));
+        }
+        catch (OperationCanceledException) { _host.ShowNotification(_loc.T("dictation.cancelled")); }
+        catch (Exception ex) { _host.ShowNotification(_loc.T("dictation.failed") + "\n" + ex.Message); }
     }
 
     private static readonly string[] Anthropic = ["anthropic"];

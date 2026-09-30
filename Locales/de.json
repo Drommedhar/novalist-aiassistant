@@ -1,4 +1,23 @@
 {
+  "dictation": {
+    "settingsGroup": "Diktieren",
+    "enabled": "Lokales Diktieren aktivieren",
+    "acceleration": "Beschleunigung",
+    "automatic": "Automatisch",
+    "accelerationHelp": "Automatisch wählt CUDA, unterstützte ROCm-Hardware oder MLX auf nativem Apple Silicon, sonst die CPU. Spracherkennung und Dialogerkennung verwenden beide die gewählte Beschleunigung. Nach einer Änderung erneut herunterladen / reparieren. GPU-Modi benötigen einen kompatiblen Grafiktreiber; wählen Sie andernfalls CPU. Die Downloadgrößen hängen von der Beschleunigung ab.",
+    "model": "Modell zur Spracherkennung",
+    "dialogueModel": "Modell zur Dialogerkennung",
+    "help": "Diktieren Sie auf Deutsch oder Englisch direkt in den Editor. Beide Modelle laufen auf diesem Computer, unabhängig vom Chat-Anbieter. Einmal herunterladen, danach offline diktieren. Qwen3 4B verbessert die Dialogerkennung; 1.7B benötigt weniger Arbeitsspeicher. Laufzeitdateien und eine vorbereitete Modellkopie benötigen zusätzlichen Speicherplatz.",
+    "prepare": "Diktiermodelle herunterladen / reparieren",
+    "preparing": "Lokales Diktieren wird vorbereitet. Den Fortschritt sehen Sie im Downloadfenster.",
+    "ready": "Lokales Diktieren ist bereit. Öffnen Sie eine Szene und wählen Sie Diktieren in der Editor-Werkzeugleiste.",
+    "notReady": "Laden Sie die gewählten Modelle vor dem Diktieren herunter. Internet wird nur zur Einrichtung benötigt.",
+    "runtime": "Lokale Diktierumgebung wird vorbereitet…",
+    "packages": "Abhängigkeiten für das Diktieren werden installiert…",
+    "models": "Lokale Modelle werden heruntergeladen und geprüft…",
+    "cancelled": "Einrichtung abgebrochen. Starten Sie den Download erneut, um fortzufahren.",
+    "failed": "Die Einrichtung für lokales Diktieren ist fehlgeschlagen."
+  },
   "ai": {
     "addToCodex": "Zum Codex hinzufügen",
     "addToCodexFailed": "„{0}“ konnte nicht zum Codex hinzugefügt werden.",

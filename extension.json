@@ -14,7 +14,8 @@
     "chat",
     "critique",
     "outline",
-    "prompts"
+    "prompts",
+    "dictation"
   ],
   "contributes": {
     "views": [

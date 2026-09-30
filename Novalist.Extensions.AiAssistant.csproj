@@ -6,6 +6,8 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Remove="tests\**\*.cs" />
+    <Compile Remove="artifacts\**\*.cs" />
+    <EmbeddedResource Include="Dictation\*.py;Dictation\requirements*.txt" />
   </ItemGroup>
   <ItemGroup>
     <Content Include="extension.json" CopyToOutputDirectory="PreserveNewest" />

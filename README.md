@@ -4,6 +4,32 @@ Bring the power of large language models directly into your Novalist writing wor
 
 ## What does this extension do?
 
+### Continuous dictation
+
+Press **Dictate** on Novalist's writing bar, choose English or German, and start speaking. Text appears directly in the editor as short clips finish processing. There is no preview or acceptance step; edit the text normally afterwards. Stop finishes the last phrase and releases the microphone.
+
+The extension runs a multilingual **Whisper** model directly for transcription and a local **Qwen3** model for narration, character dialogue, and speech tags. **Acceleration → Automatic** chooses NVIDIA CUDA, supported AMD ROCm hardware, or MLX on native Apple Silicon; otherwise it uses the CPU. Both models use the selected accelerator. Novalist applies the writer's custom quotation pair and paragraph breaks. Output that adds, removes, reorders, or rewrites words is rejected and the original transcript is inserted instead. Ambiguous dialogue may need correction in the editor.
+
+Open **Settings → Extensions → AI Assistant → Dictation**, enable local dictation, select the models, and press **Download / repair dictation models**. Setup downloads a private Python runtime, dependencies, and model weights with cancellable progress. No system Python installation or server configuration is required. Larger models use more memory and processing time; model sizes are shown in the selectors, with additional disk space needed for runtime files.
+
+Both models run in an extension-managed process communicating over private standard-input/output pipes. CPU inference uses CTranslate2, CUDA/ROCm use PyTorch, and native Apple Silicon uses MLX. Dictation opens no network service and makes no requests to chat providers. Inference uses local files with offline mode enabled; internet access is needed only during setup to fetch uv/Python, packages and pinned model revisions. Model code from repositories is never executed. Models remain loaded between clips and are released after two idle minutes. Downloads live under Novalist's settings root in `Models/com.novalist.ai/dictation`, outside the extension installation so updates preserve them. Only recent dictation is used for continuity; existing manuscript text and Codex context are not included.
+
+The default models are Whisper Small and Qwen3 4B. Speech model choices are Base, Small, Medium, and **Whisper Large v3** (~3.1 GB download); Large v3 also runs locally and needs more memory and processing time. Qwen3 1.7B needs less memory but is less reliable at dialogue classification. Processing speed depends on the computer; the pending count makes any delay visible.
+
+Choose **Acceleration** in the Dictation section to override automatic selection, then run **Download / repair dictation models**. Each backend has its own Python environment; changing accelerators may download another Whisper checkpoint, while the original Qwen weights are shared. CPU and MLX prepare an INT8 dialogue copy. CUDA and ROCm use FP16 models and move the inactive model to system RAM to leave GPU memory for the active one. Use smaller models or CPU if the selected models exceed available GPU memory.
+
+| Hardware | Local runtime | Requirements |
+| --- | --- | --- |
+| NVIDIA on Windows/Linux x64 | PyTorch CUDA 12.8 | Compatible NVIDIA driver |
+| Supported AMD on Windows x64 | PyTorch ROCm 7.2.1 | A GPU and driver supported by AMD's Windows ROCm release |
+| Supported AMD on Linux x64 | PyTorch ROCm 7.2.1 | Compatible AMD driver/runtime and access to `/dev/kfd` |
+| Native Apple Silicon | MLX / Metal | macOS 14 or newer and the ARM64 Novalist build |
+| CPU, including Intel Macs | faster-whisper / CTranslate2 | No GPU required |
+
+GPU availability is checked with a device operation during setup. An explicitly selected accelerator that cannot run reports a setup error; it does not silently switch to CPU. Windows automatic selection uses the same supported Radeon list as Qwen Speech. Native Mac environments and bootstrap tools are separated by architecture so a previous Rosetta installation cannot supply Intel Python to MLX. Whisper Base/Small/Medium downloads are approximately twice as large for CUDA/ROCm as for CPU/MLX; the selectors show the range.
+
+There is no session length limit. Clips are processed in order, and the pending count shows progress. If twelve clips accumulate, the microphone stops while the backlog finishes. Transcription failures keep pending audio in memory for retry; switching scenes pauses insertion until you return and resume at the caret. Update Novalist and AI Assistant together: this feature needs the SDK's `IDictationContributor` interface. Extensions are unavailable in the Mac App Store edition.
+
 ### AI Chat
 
 A chat panel that opens in the right sidebar. You can ask the AI anything about your story — brainstorm plot ideas, check character consistency, explore "what if" scenarios, or get writing feedback. The AI automatically receives your project's entity data (characters, locations, items, lore entries, and any custom entity types) as context, so its answers are grounded in your actual story world.
