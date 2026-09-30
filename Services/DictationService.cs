@@ -32,17 +32,21 @@ public sealed class DictationService(IDictationRuntime runtime)
         string transcript, string language, string precedingText, CancellationToken cancellationToken)
     {
         if (!IsConfigured(settings)) throw new InvalidOperationException("Configure AI Assistant dictation first.");
-        Task<string> Format(string instruction) => runtime.RequestAsync(settings.DictationModel, settings.DictationDialogueModel,
-            new { operation = "format", transcript, language, precedingText, instruction }, cancellationToken, settings.DictationAcceleration);
-        var result = await Format(Instruction);
+        // Source checkout line endings must not change the model's prompt.
+        Task<string> Format(string instruction, string context) => runtime.RequestAsync(settings.DictationModel, settings.DictationDialogueModel,
+            new { operation = "format", transcript, language, precedingText = context,
+                instruction = instruction.ReplaceLineEndings("\n") }, cancellationToken, settings.DictationAcceleration);
+        var result = await Format(Instruction, precedingText);
         try { return ParseSegments(transcript, result); }
         catch (Exception ex) when (ex is InvalidOperationException or JsonException)
         {
             // Full-precision and quantized models can make different mistakes.
             // Retry invalid formatting once, retaining the same strict check.
+            // Exclude earlier dictation: models can copy it into their answer
+            // even when instructed to use it only as context.
             // The host still inserts the original transcript if this fails.
             cancellationToken.ThrowIfCancellationRequested();
-            return ParseSegments(transcript, await Format(Instruction + "\n" + RepairInstruction));
+            return ParseSegments(transcript, await Format(Instruction + "\n" + RepairInstruction, ""));
         }
     }
 
@@ -59,11 +63,18 @@ public sealed class DictationService(IDictationRuntime runtime)
         Attribution is a speech tag such as "she said" / "sagte sie". Split WITHIN sentences:
         character speech and its attribution MUST be separate segments. Never include "she said"
         or "sagte sie" in dialogue. Never put a character's spoken words in an attribution.
+        Transcription punctuation does NOT define segment boundaries: a question or exclamation
+        followed by "he said" / "sagte er" is dialogue followed by a separate attribution,
+        even without a comma or quotation marks. The tag is NOT part of what the character says.
+        A short utterance after a speech tag (such as thanks or a greeting) is continued dialogue,
+        NOT attribution. An attribution must actually say who speaks or how they speak.
         Dialogue text has NO surrounding quotation marks; the host adds them.
         Set newParagraph true for a new speaker or a new dialogue turn, false for continuation
         by the same speaker, including after a speech tag. Attribution stays on its dialogue's
         paragraph. Apply English or German punctuation as appropriate.
         precedingText is earlier dictation for continuity ONLY. NEVER repeat it.
+        Only transcript is being formatted. Start with its first word, even when
+        precedingText contains narration or dialogue that would fit before it.
         Use each occurrence of each input word exactly once. Continued speech does not need
         another attribution. Stop at the final input word; never append a speaker or speech tag.
 
@@ -75,6 +86,11 @@ public sealed class DictationService(IDictationRuntime runtime)
         Output: {"segments":[{"text":"She said that she would return. Sie sagte, dass sie zurückkommen würde.","kind":"narration","newParagraph":false}]}
         Example transcript: Max blieb stehen. Warte hier sagte er ich hole meinen Mantel.
         Output: {"segments":[{"text":"Max blieb stehen.","kind":"narration","newParagraph":false},{"text":"Warte hier,","kind":"dialogue","newParagraph":true},{"text":"sagte er.","kind":"attribution","newParagraph":false},{"text":"Ich hole meinen Mantel.","kind":"dialogue","newParagraph":false}]}
+        Example transcript: Nora sah einen Schatten. Was war das? sagte sie. Guten Abend.
+        Output: {"segments":[{"text":"Nora sah einen Schatten.","kind":"narration","newParagraph":false},{"text":"Was war das?","kind":"dialogue","newParagraph":true},{"text":"sagte sie.","kind":"attribution","newParagraph":false},{"text":"Guten Abend.","kind":"dialogue","newParagraph":false}]}
+        Example precedingText: Nora sah einen Schatten.
+        Example transcript: Wer ist da? fragte sie. Hallo.
+        Output: {"segments":[{"text":"Wer ist da?","kind":"dialogue","newParagraph":true},{"text":"fragte sie.","kind":"attribution","newParagraph":false},{"text":"Hallo.","kind":"dialogue","newParagraph":false}]}
         """;
 
     private const string RepairInstruction = """
@@ -85,6 +101,32 @@ public sealed class DictationService(IDictationRuntime runtime)
 
     private const string WordPattern = @"[\p{L}\p{M}\p{N}]+(?:['’][\p{L}\p{M}\p{N}]+)*";
     private static string Word(string value) => value.Normalize().Replace('’', '\'').ToUpperInvariant();
+
+    // Small models sometimes quote a bare speech tag with the preceding speech.
+    // Correct only explicit, punctuated pronoun tags inside model-detected
+    // dialogue; narration and indirect speech still depend on classification.
+    private static readonly Regex EmbeddedSpeechTag = new(
+        @"(?<=[?!,])\s+(?<tag>(?:(?:sagte|fragte|antwortete|erwiderte|rief|flüsterte|murmelte|schrie)\s+(?:er|sie|ich|du|wir|ihr)|(?:he|she|I|you|we|they)\s+(?:said|asked|answered|replied|shouted|whispered|muttered|cried))[.,])(?=\s|$)",
+        RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+
+    private static IEnumerable<DictationSegment> SeparateSpeechTags(DictationSegment segment)
+    {
+        var start = 0;
+        if (segment.Kind == "dialogue")
+        {
+            foreach (Match match in EmbeddedSpeechTag.Matches(segment.Text))
+            {
+                var speech = segment.Text[start..match.Index].Trim();
+                if (speech.Length == 0) continue;
+                yield return segment with { Text = speech, NewParagraph = start == 0 && segment.NewParagraph };
+                yield return new DictationSegment(match.Groups["tag"].Value, "attribution");
+                start = match.Index + match.Length;
+            }
+        }
+        if (start == 0) yield return segment;
+        else if (!string.IsNullOrWhiteSpace(segment.Text[start..]))
+            yield return segment with { Text = segment.Text[start..].Trim(), NewParagraph = false };
+    }
 
     private static string Unfence(string response)
     {
@@ -114,6 +156,6 @@ public sealed class DictationService(IDictationRuntime runtime)
             .Select(m => Word(m.Value));
         if (!Words(transcript).SequenceEqual(Words(string.Join(" ", segments.Select(s => s.Text)))))
             throw new InvalidOperationException("Dialogue formatting changed the spoken words.");
-        return segments;
+        return segments.SelectMany(SeparateSpeechTags).ToArray();
     }
 }

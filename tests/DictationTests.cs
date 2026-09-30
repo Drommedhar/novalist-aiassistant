@@ -45,6 +45,37 @@ public class DictationTests
         => Assert.Single(DictationService.ParseSegments("Hallo.", "```json\n{\"segments\":[{\"text\":\"Hallo.\",\"kind\":\"dialogue\"}]}\n```"));
 
     [Theory]
+    [InlineData("Was zum Mama? sagte er.", "Was zum Mama?", "sagte er.", "")]
+    [InlineData("Was zum Mama? sagte er. Vielen Dank.", "Was zum Mama?", "sagte er.", "Vielen Dank.")]
+    [InlineData("What was that? he said. Thank you.", "What was that?", "he said.", "Thank you.")]
+    [InlineData("Wait! she shouted.", "Wait!", "she shouted.", "")]
+    [InlineData("Komm herein, flüsterte sie, es ist kalt.", "Komm herein,", "flüsterte sie,", "es ist kalt.")]
+    public void SeparatesBareSpeechTagsThatTheModelIncludedInDialogue(string transcript, string speech, string tag, string continuation)
+    {
+        var response = JsonSerializer.Serialize(new { segments = new[] { new { text = transcript, kind = "dialogue", newParagraph = true } } });
+        var segments = DictationService.ParseSegments(transcript, response);
+        Assert.Equal(new Novalist.Sdk.Hooks.DictationSegment(speech, "dialogue", true), segments[0]);
+        Assert.Equal(new Novalist.Sdk.Hooks.DictationSegment(tag, "attribution"), segments[1]);
+        Assert.Equal(continuation.Length == 0 ? 2 : 3, segments.Count);
+        if (continuation.Length > 0)
+            Assert.Equal(new Novalist.Sdk.Hooks.DictationSegment(continuation, "dialogue"), segments[2]);
+        Assert.Equal(transcript, string.Join(" ", segments.Select(s => s.Text)));
+    }
+
+    [Theory]
+    [InlineData("Sie sagte, dass der Zug zu spät kommen würde.", "narration")]
+    [InlineData("Was zum Mama? sagte er.", "narration")]
+    [InlineData("Why? He said nothing about a train.", "dialogue")]
+    [InlineData("What did she say?", "dialogue")]
+    public void SpeechTagCorrectionLeavesNarrationAndReportedSpeechAlone(string transcript, string kind)
+    {
+        var response = JsonSerializer.Serialize(new { segments = new[] { new { text = transcript, kind } } });
+        var segment = Assert.Single(DictationService.ParseSegments(transcript, response));
+        Assert.Equal(transcript, segment.Text);
+        Assert.Equal(kind, segment.Kind);
+    }
+
+    [Theory]
     [InlineData("en", "small", "cpu")]
     [InlineData("de", "small", "auto")]
     [InlineData("en", "large-v3", "cuda")]
@@ -72,17 +103,19 @@ public class DictationTests
     [Fact]
     public async Task DialogueUsesTheSameLocalRuntimeAndValidatesItsOutput()
     {
+        var attempts = 0;
         using var runtime = new FakeRuntime((request, _) =>
         {
             var json = JsonSerializer.SerializeToElement(request);
             Assert.Equal("format", json.GetProperty("operation").GetString());
             Assert.Equal("Hallo.", json.GetProperty("transcript").GetString());
-            Assert.Equal("Die Tür ging auf.", json.GetProperty("precedingText").GetString());
+            Assert.Equal(attempts++ == 0 ? "Die Tür ging auf." : "", json.GetProperty("precedingText").GetString());
             Assert.False(json.TryGetProperty("audio", out var unused));
             return Task.FromResult("""{"segments":[{"text":"Hallo mein Freund.","kind":"dialogue"}]}""");
         });
         await Assert.ThrowsAsync<InvalidOperationException>(() => new DictationService(runtime)
             .DetectDialogueAsync(new AiSettings(), "Hallo.", "de", "Die Tür ging auf.", CancellationToken.None));
+        Assert.Equal(2, attempts);
     }
 
     [Fact]
@@ -103,6 +136,28 @@ public class DictationTests
         Assert.Equal(2, instructions.Count);
         Assert.StartsWith(instructions[0], instructions[1]);
         Assert.Contains("never append", instructions[1]);
+        Assert.All(instructions, instruction => Assert.DoesNotContain("\r", instruction));
+    }
+
+    [Fact]
+    public async Task CopiedContextIsRetriedWithoutEarlierDictationAndStillRequiresEveryTranscriptWord()
+    {
+        const string transcript = "Was zum Mama? sagte er. Vielen Dank.";
+        const string context = "Liam ging die Treppe hinunter.";
+        var attempts = 0;
+        using var runtime = new FakeRuntime((request, _) =>
+        {
+            var json = JsonSerializer.SerializeToElement(request);
+            Assert.Equal(transcript, json.GetProperty("transcript").GetString());
+            Assert.Equal(attempts++ == 0 ? context : "", json.GetProperty("precedingText").GetString());
+            return Task.FromResult(attempts == 1
+                ? JsonSerializer.Serialize(new { segments = new[] { new { text = context + " " + transcript, kind = "narration" } } })
+                : """{"segments":[{"text":"Was zum Mama?","kind":"dialogue","newParagraph":true},{"text":"sagte er.","kind":"attribution"},{"text":"Vielen Dank.","kind":"dialogue"}]}""");
+        });
+        var result = await new DictationService(runtime).DetectDialogueAsync(new AiSettings(), transcript, "de", context, default);
+        Assert.Equal(2, attempts);
+        Assert.Equal(new[] { "dialogue", "attribution", "dialogue" }, result.Select(s => s.Kind));
+        Assert.Equal(transcript, string.Join(" ", result.Select(s => s.Text)));
     }
 
     [Fact]
