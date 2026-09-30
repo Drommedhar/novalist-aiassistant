@@ -112,6 +112,12 @@ class Engine:
                 device="cpu", compute_type="int8", intra_threads=min(8, os.cpu_count() or 4))
 
     def run(self, request):
+        if request["operation"] == "warmup":
+            # Load both before the first audio clip. GPU adapters retain the
+            # inactive model in RAM; leave speech in VRAM for the first clip.
+            self.load_dialogue()
+            self.load_speech()
+            return ""
         if request.get("language") not in ("en", "de"):
             raise ValueError("Unsupported language")
         if request["operation"] == "transcribe":

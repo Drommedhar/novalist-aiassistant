@@ -36,6 +36,14 @@ public sealed class LocalDictationRuntime : IDictationRuntime
         "requirements-cuda.txt", "requirements-rocm-windows.txt", "requirements-rocm-linux.txt", "requirements-mlx.txt"];
     private readonly Dictionary<string, byte[]> _resources = ResourceFiles.ToDictionary(file => file, Resource);
     private readonly string _recipe;
+    // Protocol-only upgrade: reuse exactly the previous models/dependencies.
+    // Gate both recipes so later package/model changes cannot inherit this.
+    // Both LF and CRLF source builds are supported.
+    private bool CompatibleRecipe(string installed) => installed == _recipe ||
+        ((_recipe is "B37107DB793DD7DC4573CEB84A2C78D533650AA91B43B3B868B63CDF8604BF8F"
+            or "DCD002304D36BB1F0646ECE204238E31C66ADB4AF9CB3BCB14333F7DA79E42E6")
+        && (installed is "265BC0124E3B4C5541510EBD3B9652603B8D891C08AF099CEFC2392F9962D7AC"
+            or "371BBE9496A758E93B8590C2349D01D46506FD5D6D2916F7FA481D8D83A128C9"));
     private string Venv(string backend) => Path.Combine(_root,
         (backend == "cpu" ? "venv" : "venv-" + backend)
         + (OperatingSystem.IsMacOS() ? "-" + RuntimeInformation.ProcessArchitecture : ""));
@@ -84,7 +92,7 @@ public sealed class LocalDictationRuntime : IDictationRuntime
         {
             var backend = DictationHardware.Resolve(acceleration);
             return File.Exists(Python(backend)) && File.Exists(Script) && File.Exists(Marker(speech, dialogue, backend))
-                && File.ReadAllText(Marker(speech, dialogue, backend)) == _recipe;
+                && CompatibleRecipe(File.ReadAllText(Marker(speech, dialogue, backend)));
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or PlatformNotSupportedException) { return false; }
     }
@@ -144,6 +152,13 @@ public sealed class LocalDictationRuntime : IDictationRuntime
         {
             token.ThrowIfCancellationRequested();
             if (!IsReady(speech, dialogue, backend)) throw new InvalidOperationException("Download the local dictation models in AI Assistant settings first.");
+            if (File.ReadAllText(Marker(speech, dialogue, backend)) != _recipe)
+            {
+                StopWorker();
+                foreach (var (name, contents) in _resources)
+                    await File.WriteAllBytesAsync(Path.Combine(_root, name), contents, token);
+                await File.WriteAllTextAsync(Marker(speech, dialogue, backend), _recipe, token);
+            }
             _idle.Change(Timeout.Infinite, Timeout.Infinite);
             Process worker;
             lock (_processLock)

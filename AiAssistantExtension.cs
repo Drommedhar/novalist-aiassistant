@@ -8,7 +8,7 @@ using Novalist.Sdk.Services;
 
 namespace Novalist.Extensions.AiAssistant;
 
-public sealed class AiAssistantExtension : IExtension, IStatusBarContributor, IRibbonContributor, ISettingsSchemaContributor, IGrammarCheckContributor, IArticleGeneratorContributor, IEntityExtractionContributor, IContextMenuContributor, IWizardContributor, IDictationContributor, Novalist.Sdk.Hooks.IWebViewContributor
+public sealed class AiAssistantExtension : IExtension, IStatusBarContributor, IRibbonContributor, ISettingsSchemaContributor, IGrammarCheckContributor, IArticleGeneratorContributor, IEntityExtractionContributor, IContextMenuContributor, IWizardContributor, IDictationContributor, IDictationWarmupContributor, Novalist.Sdk.Hooks.IWebViewContributor
 {
     public string Id => "com.novalist.ai";
     public string DisplayName => "AI Assistant";
@@ -46,6 +46,8 @@ public sealed class AiAssistantExtension : IExtension, IStatusBarContributor, IR
     public bool IsDictationAvailable => _dictation?.IsConfigured(Settings) == true;
     public string AudioDestination => "Whisper " + Settings.DictationModel;
     public string FormattingDestination => "Qwen3 " + Settings.DictationDialogueModel;
+    public Task WarmUpAsync(CancellationToken cancellationToken = default)
+        => _dictation!.WarmUpAsync(Settings, cancellationToken);
     public Task<string> TranscribeAsync(byte[] audio, string mimeType, string language, CancellationToken cancellationToken = default)
         => _dictation!.TranscribeAsync(Settings, audio, mimeType, language, cancellationToken);
 

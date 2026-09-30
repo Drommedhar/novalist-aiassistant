@@ -11,6 +11,13 @@ public sealed class DictationService(IDictationRuntime runtime)
     public bool IsConfigured(AiSettings settings) => settings.DictationEnabled
         && runtime.IsReady(settings.DictationModel, settings.DictationDialogueModel, settings.DictationAcceleration);
 
+    public Task WarmUpAsync(AiSettings settings, CancellationToken cancellationToken)
+    {
+        if (!IsConfigured(settings)) throw new InvalidOperationException("Configure AI Assistant dictation first.");
+        return runtime.RequestAsync(settings.DictationModel, settings.DictationDialogueModel,
+            new { operation = "warmup" }, cancellationToken, settings.DictationAcceleration);
+    }
+
     public Task<string> TranscribeAsync(AiSettings settings, byte[] audio, string mimeType,
         string language, CancellationToken cancellationToken)
     {

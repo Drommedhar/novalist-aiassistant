@@ -18,6 +18,15 @@ import accelerated
 
 
 class WorkerTests(unittest.TestCase):
+    def test_warmup_loads_both_models_without_audio_and_leaves_speech_active(self):
+        for engine_type in (worker.Engine, accelerated.TorchEngine, accelerated.MlxEngine):
+            engine = object.__new__(engine_type)
+            calls = []
+            engine.load_dialogue = lambda: calls.append("dialogue")
+            engine.load_speech = lambda: calls.append("speech")
+            self.assertEqual(engine.run({"operation": "warmup"}), "")
+            self.assertEqual(calls, ["dialogue", "speech"])
+
     def test_generation_stops_at_a_complete_object_even_with_extra_closing_text_in_the_token(self):
         expected = '{"segments":[{"text":"Hallo.","kind":"dialogue"}]}'
         for suffix in ("", "}", "\n```", " Here is an explanation."):

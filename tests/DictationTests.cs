@@ -5,6 +5,25 @@ using Xunit;
 
 public class DictationTests
 {
+    [Fact]
+    public async Task WarmupLoadsTheChosenModelsWithoutAudioOrChatConfiguration()
+    {
+        using var cancellation = new CancellationTokenSource();
+        using var runtime = new FakeRuntime(async (request, token) =>
+        {
+            var json = JsonSerializer.SerializeToElement(request);
+            Assert.Equal("warmup", json.GetProperty("operation").GetString());
+            Assert.Single(json.EnumerateObject());
+            await Task.Delay(Timeout.Infinite, token);
+            return "";
+        }) { SpeechModel = "large-v3", Acceleration = "rocm" };
+        var service = new DictationService(runtime);
+        var pending = service.WarmUpAsync(new AiSettings { Enabled = false, DictationModel = "large-v3",
+            DictationAcceleration = "rocm" }, cancellation.Token);
+        cancellation.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending);
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.WarmUpAsync(new AiSettings { DictationEnabled = false }, default));
+    }
     [Theory]
     [InlineData("Hello, she said.", """{"segments":[{"text":"Hello,","kind":"dialogue","newParagraph":true},{"text":"she said.","kind":"attribution"}]}""")]
     [InlineData("Komm zurück sagte sie", """{"segments":[{"text":"Komm zurück!","kind":"dialogue","newParagraph":true},{"text":"sagte sie.","kind":"attribution"}]}""")]
@@ -130,6 +149,38 @@ public class DictationTests
         Assert.False(runtime.IsReady("small", "4B"));
         await Assert.ThrowsAsync<InvalidOperationException>(() => runtime.RequestAsync("small", "4B", new { }, default));
         Assert.False(Directory.Exists(path));
+    }
+
+    [Theory]
+    [InlineData("265BC0124E3B4C5541510EBD3B9652603B8D891C08AF099CEFC2392F9962D7AC")]
+    [InlineData("371BBE9496A758E93B8590C2349D01D46506FD5D6D2916F7FA481D8D83A128C9")]
+    public async Task CompatibleWorkerUpgradeKeepsInstalledModelsWithoutRepair(string previousRecipe)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "nl-dictation-upgrade-" + Guid.NewGuid());
+        var architecture = System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture;
+        var venv = Path.Combine(root, "venv" + (OperatingSystem.IsMacOS() ? "-" + architecture : ""));
+        var python = Path.Combine(venv, OperatingSystem.IsWindows() ? "Scripts/python.exe" : "bin/python");
+        Directory.CreateDirectory(Path.GetDirectoryName(python)!);
+        File.WriteAllText(python, ""); // Intentionally non-executable: never launch Python in this unit test.
+        File.WriteAllText(Path.Combine(root, "worker.py"), "old worker");
+        var marker = Path.Combine(root, $"ready-small-4B-cpu-{architecture}.txt");
+        File.WriteAllText(marker, previousRecipe);
+        var weights = Path.Combine(root, "model-fixture.bin");
+        File.WriteAllText(weights, "keep installed weights");
+        try
+        {
+            using var runtime = new LocalDictationRuntime(root);
+            Assert.True(runtime.IsReady("small", "4B", "cpu"));
+            await Assert.ThrowsAsync<System.ComponentModel.Win32Exception>(() => runtime.RequestAsync("small", "4B",
+                new { operation = "warmup" }, default, "cpu"));
+            Assert.Contains("warmup", File.ReadAllText(Path.Combine(root, "worker.py")));
+            Assert.NotEqual(previousRecipe, File.ReadAllText(marker));
+            Assert.Equal("keep installed weights", File.ReadAllText(weights));
+            Assert.True(runtime.IsReady("small", "4B", "cpu"));
+            File.WriteAllText(marker, "unknown-recipe");
+            Assert.False(runtime.IsReady("small", "4B", "cpu"));
+        }
+        finally { Directory.Delete(root, true); }
     }
 
     private sealed class FakeRuntime(Func<object, CancellationToken, Task<string>> run) : IDictationRuntime
