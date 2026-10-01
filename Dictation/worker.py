@@ -34,6 +34,20 @@ DIALOGUE = {
     "4B": ("Qwen/Qwen3-4B", "1cfa9a7208912126459214e8b04321603b3df60c"),
 }
 
+# Keep short replies, but reject isolated clicks and trim long non-speech gaps.
+# The packaged Silero model is local; VAD never downloads during inference.
+VAD_OPTIONS = dict(threshold=0.6, min_speech_duration_ms=120,
+                   min_silence_duration_ms=300, speech_pad_ms=250)
+
+
+def filter_speech(samples):
+    import numpy as np
+    from faster_whisper.vad import get_speech_timestamps, VadOptions
+    if not len(samples):
+        return samples
+    spans = get_speech_timestamps(samples, VadOptions(**VAD_OPTIONS))
+    return np.concatenate([samples[span["start"]:span["end"]] for span in spans]) if spans else samples[:0]
+
 
 def model_path(root, model):
     return root / "models" / (model[0].replace("/", "--") + "-" + model[1])
@@ -139,7 +153,9 @@ class Engine:
     def transcribe(self, audio, language):
         self.load_speech()
         segments, _ = self.speech.transcribe(io.BytesIO(audio), language=language,
-            task="transcribe", beam_size=5, vad_filter=True, condition_on_previous_text=False)
+            task="transcribe", beam_size=5, vad_filter=True, vad_parameters=VAD_OPTIONS,
+            temperature=0, no_speech_threshold=0.6, log_prob_threshold=-1.0,
+            condition_on_previous_text=False)
         return " ".join(segment.text.strip() for segment in segments).strip()
 
     def format(self, messages, transcript):

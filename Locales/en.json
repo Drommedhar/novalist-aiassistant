@@ -333,7 +333,7 @@
         "help": "Path or command name. \"copilot\" works if the binary is on PATH.",
         "title": "Copilot CLI path"
       },
-      "description": "Pick a provider and fill in just enough to start chatting.",
+      "description": "Set up AI assistance, local dictation, or both.",
       "endpoint": {
         "help": "Use the default address or enter the address of your server.",
         "modelHelp": "Choose a model available from the selected service.",
@@ -383,6 +383,18 @@
       "claudeModel": {
         "title": "Claude model",
         "help": "An alias the CLI accepts: sonnet, opus, haiku, or fable."
+      },
+      "features": {
+        "title": "Which features would you like?",
+        "help": "AI assistance and dictation work independently. You can change this later in Settings → AI Assistant.",
+        "ai": "AI assistance only",
+        "dictation": "Local dictation only",
+        "both": "Both"
+      },
+      "download": {
+        "help": "Download and check the selected models after finishing setup. Existing models are reused. Internet and additional disk space are needed for setup; dictation then works offline.",
+        "now": "Download after setup",
+        "later": "Download later in settings"
       }
     },
     "knowledgeMigration": {

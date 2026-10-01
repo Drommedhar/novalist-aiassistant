@@ -108,8 +108,8 @@ public class DictationTests
         {
             var json = JsonSerializer.SerializeToElement(request);
             Assert.Equal("format", json.GetProperty("operation").GetString());
-            Assert.Equal("Hallo.", json.GetProperty("transcript").GetString());
-            Assert.Equal(attempts++ == 0 ? "Die Tür ging auf." : "", json.GetProperty("precedingText").GetString());
+            Assert.Equal(attempts++ == 0 ? "Die Tür ging auf. Hallo." : "Hallo.", json.GetProperty("transcript").GetString());
+            Assert.Equal("", json.GetProperty("precedingText").GetString());
             Assert.False(json.TryGetProperty("audio", out var unused));
             return Task.FromResult("""{"segments":[{"text":"Hallo mein Freund.","kind":"dialogue"}]}""");
         });
@@ -140,7 +140,7 @@ public class DictationTests
     }
 
     [Fact]
-    public async Task CopiedContextIsRetriedWithoutEarlierDictationAndStillRequiresEveryTranscriptWord()
+    public async Task InvalidCombinedPassageIsRetriedWithoutEarlierDictationAndStillRequiresEveryTranscriptWord()
     {
         const string transcript = "Was zum Mama? sagte er. Vielen Dank.";
         const string context = "Liam ging die Treppe hinunter.";
@@ -148,16 +148,37 @@ public class DictationTests
         using var runtime = new FakeRuntime((request, _) =>
         {
             var json = JsonSerializer.SerializeToElement(request);
-            Assert.Equal(transcript, json.GetProperty("transcript").GetString());
-            Assert.Equal(attempts++ == 0 ? context : "", json.GetProperty("precedingText").GetString());
+            Assert.Equal(attempts++ == 0 ? context + " " + transcript : transcript, json.GetProperty("transcript").GetString());
+            Assert.Equal("", json.GetProperty("precedingText").GetString());
             return Task.FromResult(attempts == 1
-                ? JsonSerializer.Serialize(new { segments = new[] { new { text = context + " " + transcript, kind = "narration" } } })
+                ? JsonSerializer.Serialize(new { segments = new[] { new { text = context + " " + context + " " + transcript, kind = "narration" } } })
                 : """{"segments":[{"text":"Was zum Mama?","kind":"dialogue","newParagraph":true},{"text":"sagte er.","kind":"attribution"},{"text":"Vielen Dank.","kind":"dialogue"}]}""");
         });
         var result = await new DictationService(runtime).DetectDialogueAsync(new AiSettings(), transcript, "de", context, default);
         Assert.Equal(2, attempts);
         Assert.Equal(new[] { "dialogue", "attribution", "dialogue" }, result.Select(s => s.Kind));
         Assert.Equal(transcript, string.Join(" ", result.Select(s => s.Text)));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ContextIsRemovedExactlyEvenWhenItSharesASegmentWithRepeatedNewWords(bool merged)
+    {
+        var calls = 0;
+        using var runtime = new FakeRuntime((request, _) =>
+        {
+            calls++;
+            var json = JsonSerializer.SerializeToElement(request);
+            Assert.Equal("Hello. Hello again.", json.GetProperty("transcript").GetString());
+            return Task.FromResult(merged
+                ? """{"segments":[{"text":"Hello. Hello again.","kind":"dialogue","newParagraph":true}]}"""
+                : """{"segments":[{"text":"Hello.","kind":"dialogue","newParagraph":true},{"text":"Hello again.","kind":"dialogue","newParagraph":false}]}""");
+        });
+        var result = await new DictationService(runtime).DetectDialogueAsync(new AiSettings(), "Hello again.", "en",
+            "Earlier unrelated paragraph.\nHello.", default);
+        Assert.Equal(new Novalist.Sdk.Hooks.DictationSegment("Hello again.", "dialogue"), Assert.Single(result));
+        Assert.Equal(1, calls);
     }
 
     [Fact]
@@ -209,6 +230,8 @@ public class DictationTests
     [Theory]
     [InlineData("265BC0124E3B4C5541510EBD3B9652603B8D891C08AF099CEFC2392F9962D7AC")]
     [InlineData("371BBE9496A758E93B8590C2349D01D46506FD5D6D2916F7FA481D8D83A128C9")]
+    [InlineData("B37107DB793DD7DC4573CEB84A2C78D533650AA91B43B3B868B63CDF8604BF8F")]
+    [InlineData("DCD002304D36BB1F0646ECE204238E31C66ADB4AF9CB3BCB14333F7DA79E42E6")]
     public async Task CompatibleWorkerUpgradeKeepsInstalledModelsWithoutRepair(string previousRecipe)
     {
         var root = Path.Combine(Path.GetTempPath(), "nl-dictation-upgrade-" + Guid.NewGuid());
@@ -234,6 +257,29 @@ public class DictationTests
             Assert.True(runtime.IsReady("small", "4B", "cpu"));
             File.WriteAllText(marker, "unknown-recipe");
             Assert.False(runtime.IsReady("small", "4B", "cpu"));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Theory]
+    [InlineData("cuda")]
+    [InlineData("rocm")]
+    [InlineData("mlx")]
+    public void AcceleratedRuntimeNeedsPreparationForNewSpeechFilterDependencies(string backend)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "nl-dictation-vad-upgrade-" + Guid.NewGuid());
+        var architecture = System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture;
+        var venv = Path.Combine(root, "venv-" + backend + (OperatingSystem.IsMacOS() ? "-" + architecture : ""));
+        var python = Path.Combine(venv, OperatingSystem.IsWindows() ? "Scripts/python.exe" : "bin/python");
+        Directory.CreateDirectory(Path.GetDirectoryName(python)!);
+        File.WriteAllText(python, "");
+        File.WriteAllText(Path.Combine(root, "worker.py"), "old worker");
+        File.WriteAllText(Path.Combine(root, $"ready-small-4B-{backend}-{architecture}.txt"),
+            "B37107DB793DD7DC4573CEB84A2C78D533650AA91B43B3B868B63CDF8604BF8F");
+        try
+        {
+            using var runtime = new LocalDictationRuntime(root);
+            Assert.False(runtime.IsReady("small", "4B", backend));
         }
         finally { Directory.Delete(root, true); }
     }

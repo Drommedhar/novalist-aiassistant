@@ -64,4 +64,47 @@ public class DictationDialogueIntegrationTests(ITestOutputHelper output)
     private static IEnumerable<(string Word, string Kind)> ClassifiedWords(IEnumerable<DictationSegment> segments)
         => segments.SelectMany(s => Regex.Matches(s.Text, @"[\p{L}\p{M}\p{N}]+")
             .Select(m => (m.Value.ToUpperInvariant(), s.Kind)));
+
+    [Fact(SkipUnless = nameof(Enabled), Skip = "Opt in with prepared models and the offline network guard.")]
+    public async Task FollowingSpeechAndActionsKeepTheirSpeakerAcrossChunks()
+    {
+        Assert.Contains("offline_guard", Environment.GetEnvironmentVariable("PYTHONPATH") ?? "");
+        using var runtime = new LocalDictationRuntime();
+        var settings = new AiSettings
+        {
+            DictationAcceleration = Environment.GetEnvironmentVariable("NOVALIST_DICTATION_ACCELERATION") ?? "auto"
+        };
+        var service = new DictationService(runtime);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(10));
+        (string Language, string Context, DictationSegment[] Expected)[] passages =
+        [
+            ("en", "", [new("Stay here,", "dialogue", true), new("Maya said.", "attribution"),
+                new("I will fetch the key.", "dialogue"), new("She opened the drawer.", "narration"),
+                new("Tom stepped outside.", "narration", true)]),
+            ("de", "", [new("Bleib hier,", "dialogue", true), new("sagte Lena.", "attribution"),
+                new("Ich hole den Schlüssel.", "dialogue"), new("Sie öffnete die Schublade.", "narration"),
+                new("Paul ging nach draußen.", "narration", true)]),
+            ("en", "“Stay here,” Maya said.", [new("I will fetch the key.", "dialogue"),
+                new("She opened the drawer.", "narration"), new("Tom stepped outside.", "narration", true)]),
+            ("de", "„Wohin gehst du?“, fragte Lena.", [new("Zum Bahnhof,", "dialogue", true),
+                new("antwortete Paul.", "attribution"), new("Ich muss meinen Bruder abholen.", "dialogue")])
+        ];
+        foreach (var (language, context, expected) in passages)
+        {
+            var transcript = string.Join(" ", expected.Select(s => s.Text));
+            var actual = await service.DetectDialogueAsync(settings, transcript, language, context, timeout.Token);
+            output.WriteLine(System.Text.Json.JsonSerializer.Serialize(actual));
+            Assert.Equal(ClassifiedWords(expected), ClassifiedWords(actual));
+            static IEnumerable<int> Paragraphs(IEnumerable<DictationSegment> segments)
+            {
+                var word = 0;
+                foreach (var segment in segments)
+                {
+                    if (segment.NewParagraph) yield return word;
+                    word += Regex.Matches(segment.Text, @"[\p{L}\p{M}\p{N}]+").Count;
+                }
+            }
+            Assert.Equal(Paragraphs(expected), Paragraphs(actual));
+        }
+    }
 }

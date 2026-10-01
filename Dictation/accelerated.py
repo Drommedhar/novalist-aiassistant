@@ -2,7 +2,7 @@
 import io
 import wave
 
-from worker import Engine, complete_json
+from worker import Engine, complete_json, filter_speech
 
 
 def waveform(audio):
@@ -58,7 +58,7 @@ class TorchEngine(Engine):
         self.dialogue.to("cuda")
 
     def transcribe(self, audio, language):
-        samples = waveform(audio)
+        samples = filter_speech(waveform(audio))
         if not len(samples):
             return ""
         self.load_speech()
@@ -117,12 +117,13 @@ class MlxEngine(Engine):
 
     def transcribe(self, audio, language):
         import mlx_whisper
-        samples = waveform(audio)
+        samples = filter_speech(waveform(audio))
         if not len(samples):
             return ""
         # Supplying samples avoids mlx-whisper's external ffmpeg executable.
         result = mlx_whisper.transcribe(samples, path_or_hf_repo=str(self.speech_path),
-            language=language, task="transcribe", condition_on_previous_text=False, verbose=None)
+            language=language, task="transcribe", temperature=0, no_speech_threshold=0.6,
+            logprob_threshold=-1.0, condition_on_previous_text=False, verbose=None)
         return result["text"].strip()
 
     def format(self, messages, transcript):

@@ -4,13 +4,19 @@ Bring the power of large language models directly into your Novalist writing wor
 
 ## What does this extension do?
 
+The setup wizard lets you enable **AI assistance**, **local dictation**, **both**, or **Not now**. Dictation has its own model and acceleration choices and needs no chat provider. Setup remembers your choice across restarts; reopen it from settings whenever you want to change it. You can download dictation models when finishing the wizard or later in settings.
+
 ### Continuous dictation
 
 Press **Dictate** on Novalist's writing bar, choose English or German, and start speaking. Text appears directly in the editor as short clips finish processing. There is no preview or acceptance step; edit the text normally afterwards. Stop finishes the last phrase and releases the microphone.
 
-Start immediately loads both installed models alongside microphone capture, before the first audio batch. **Loading dictation models…** remains visible while the models load; captured speech waits in order. Stopping without speech cancels loading, and a loading failure keeps captured audio for retry. The protocol update reuses the previous prepared models without another download or repair. This requires the matching host with the optional `IDictationWarmupContributor` SDK interface.
+Start immediately loads both installed models alongside microphone capture, before the first audio batch. **Loading dictation models…** remains visible while the models load; captured speech waits in order. Stopping without speech cancels loading, and a loading failure keeps captured audio for retry. This requires the matching host with the optional `IDictationWarmupContributor` SDK interface.
 
 The extension runs a multilingual **Whisper** model directly for transcription and a local **Qwen3** model for narration, character dialogue, and speech tags. **Acceleration → Automatic** chooses NVIDIA CUDA, supported AMD ROCm hardware, or MLX on native Apple Silicon; otherwise it uses the CPU. Both models use the selected accelerator. Novalist applies the writer's custom quotation pair and paragraph breaks. Output that adds, removes, reorders, or rewrites words is rejected and the original transcript is inserted instead. Ambiguous dialogue may need correction in the editor.
+
+Continued speech and actions by the same character can stay in one paragraph; a different speaker or actor starts another. Recording pauses preserve the existing paragraph and quotation context. These formatting changes require the matching Novalist host update.
+
+All accelerators use local Silero speech detection to reject non-speech audio before transcription. This reduces invented text from silence, hum and clicks; nearby voices can still be recognized. Existing CUDA, ROCm and MLX installations need **Download / repair dictation models** once to add the speech filter dependencies, reusing their cached model downloads. Existing CPU installations already include the filter and update without preparation.
 
 Open **Settings → Extensions → AI Assistant → Dictation**, enable local dictation, select the models, and press **Download / repair dictation models**. Setup downloads a private Python runtime, dependencies, and model weights with cancellable progress. No system Python installation or server configuration is required. Larger models use more memory and processing time; model sizes are shown in the selectors, with additional disk space needed for runtime files.
 

@@ -136,6 +136,7 @@ public sealed class AiAssistantExtension : IExtension, IStatusBarContributor, IR
     private const string IconBook = "M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z";
 
     private bool _setupWizardChecked;
+    private bool _hasSavedDictationChoice;
     private bool _legacyKnowledgeChecked;
 
     // Background analysis state, surfaced in the status bar so a pass the user
@@ -201,10 +202,7 @@ public sealed class AiAssistantExtension : IExtension, IStatusBarContributor, IR
             // nothing is configured yet. Runs after a project is open so the
             // user has context.
             if (!_setupWizardChecked
-                && !Settings.Enabled
-                && !IsDictationAvailable
-                && string.IsNullOrWhiteSpace(Settings.LmStudioModel)
-                && string.IsNullOrWhiteSpace(Settings.CopilotModel))
+                && Services.AiSetupWizard.ShouldOffer(Settings, _hasSavedDictationChoice))
             {
                 _setupWizardChecked = true;
                 _ = RunSetupWizardAsync();
@@ -499,25 +497,38 @@ public sealed class AiAssistantExtension : IExtension, IStatusBarContributor, IR
     // ── IWizardContributor ──────────────────────────────────────────
 
     public IReadOnlyList<Novalist.Sdk.Models.Wizards.WizardDefinition> GetWizards()
-        => new[] { Services.AiSetupWizard.Build(_loc.T) };
+        => new[] { BuildSetupWizard() };
+
+    private WizardDefinition BuildSetupWizard()
+    {
+        var definition = Services.AiSetupWizard.Build(_loc.T);
+        definition.OnCompleted = CompleteSetupAsync;
+        return definition;
+    }
+
+    private async Task CompleteSetupAsync(WizardResult result)
+    {
+        if (!Services.AiSetupWizard.Apply(Settings, result)) return;
+        await _host.WriteHostDataAsync("ai", JsonSerializer.Serialize(Settings));
+        ConfigureAiService();
+        _host.ShowNotification(_loc.T("toast.setupComplete"));
+        if (Settings.DictationEnabled && result.GetText("prepareDictation") == "true"
+            && !IsDictationAvailable && _dictationPreparation is not { IsCompleted: false })
+            _dictationPreparation = PrepareDictationAsync(Settings.DictationModel, Settings.DictationDialogueModel, Settings.DictationAcceleration);
+    }
 
     /// <summary>Launches the AI setup wizard via the host, applies the result
     /// to <see cref="Settings"/>, and persists. Safe to call repeatedly — does
     /// nothing if the user cancels.</summary>
     internal async Task RunSetupWizardAsync()
     {
-        var definition = Services.AiSetupWizard.Build(_loc.T);
+        var definition = BuildSetupWizard();
 
         // Seed current values so the wizard reflects existing settings instead
         // of starting blank when re-launched from the settings page.
         var seed = Services.AiSetupWizard.CreateSeed(Settings);
 
-        var result = await _host.RunWizardAsync(definition, seed);
-        if (result == null || !result.Completed) return;
-
-        Services.AiSetupWizard.Apply(Settings, result);
-        SaveSettings();
-        _host.ShowNotification(_loc.T("toast.setupComplete"));
+        await _host.RunWizardAsync(definition, seed);
     }
 
     // ── Settings persistence ────────────────────────────────────────
@@ -531,6 +542,8 @@ public sealed class AiAssistantExtension : IExtension, IStatusBarContributor, IR
             try
             {
                 Settings = JsonSerializer.Deserialize<AiSettings>(json) ?? new AiSettings();
+                using var document = JsonDocument.Parse(json);
+                _hasSavedDictationChoice = document.RootElement.TryGetProperty("dictationEnabled", out _);
             }
             catch
             {
@@ -719,6 +732,7 @@ public sealed class AiAssistantExtension : IExtension, IStatusBarContributor, IR
         Settings.DictationModel = speechModel;
         Settings.DictationDialogueModel = dialogueModel;
         Settings.DictationAcceleration = acceleration;
+        Settings.SetupCompleted = true;
         var previousProvider = AiProviders.Selected(Settings);
         AiProviders.ApplyConnection(Settings, values);
         if (AiProviders.Selected(Settings) != previousProvider) _availableModels = [];

@@ -33,21 +33,44 @@ public sealed class DictationService(IDictationRuntime runtime)
     {
         if (!IsConfigured(settings)) throw new InvalidOperationException("Configure AI Assistant dictation first.");
         // Source checkout line endings must not change the model's prompt.
-        Task<string> Format(string instruction, string context) => runtime.RequestAsync(settings.DictationModel, settings.DictationDialogueModel,
-            new { operation = "format", transcript, language, precedingText = context,
+        Task<string> Format(string instruction, string text) => runtime.RequestAsync(settings.DictationModel, settings.DictationDialogueModel,
+            new { operation = "format", transcript = text, language, precedingText = "",
                 instruction = instruction.ReplaceLineEndings("\n") }, cancellationToken, settings.DictationAcceleration);
-        var result = await Format(Instruction, precedingText);
-        try { return ParseSegments(transcript, result); }
+        // Format the last paragraph and new speech as one passage. Small models
+        // otherwise treat a recording boundary as a new turn even when they
+        // identify the same speaker. Validate every word, then discard the exact
+        // context prefix; only new dictation may reach the editor.
+        var context = precedingText.Trim().Split('\n').LastOrDefault()?.Trim() ?? "";
+        var passage = context.Length == 0 ? transcript : context + " " + transcript;
+        var result = await Format(Instruction, passage);
+        try { return RemoveContext(ParseSegments(passage, result), context); }
         catch (Exception ex) when (ex is InvalidOperationException or JsonException)
         {
             // Full-precision and quantized models can make different mistakes.
             // Retry invalid formatting once, retaining the same strict check.
-            // Exclude earlier dictation: models can copy it into their answer
-            // even when instructed to use it only as context.
+            // Retry just the current speech if the combined passage was invalid.
             // The host still inserts the original transcript if this fails.
             cancellationToken.ThrowIfCancellationRequested();
-            return ParseSegments(transcript, await Format(Instruction + "\n" + RepairInstruction, ""));
+            return ParseSegments(transcript, await Format(Instruction + "\n" + RepairInstruction, transcript));
         }
+    }
+
+    private static IReadOnlyList<DictationSegment> RemoveContext(IReadOnlyList<DictationSegment> segments, string context)
+    {
+        var remaining = Regex.Matches(context, WordPattern).Count;
+        var result = new List<DictationSegment>();
+        foreach (var segment in segments)
+        {
+            if (remaining == 0) { result.Add(segment); continue; }
+            var words = Regex.Matches(segment.Text, WordPattern);
+            if (words.Count <= remaining) { remaining -= words.Count; continue; }
+            // Context and current speech can share a model segment, in which
+            // case the new words continue that paragraph and quotation.
+            result.Add(segment with { Text = segment.Text[words[remaining].Index..], NewParagraph = false });
+            remaining = 0;
+        }
+        if (remaining != 0 || result.Count == 0) throw new InvalidOperationException("Invalid dictation context boundary.");
+        return result;
     }
 
     internal const string Instruction = """
@@ -69,9 +92,22 @@ public sealed class DictationService(IDictationRuntime runtime)
         A short utterance after a speech tag (such as thanks or a greeting) is continued dialogue,
         NOT attribution. An attribution must actually say who speaks or how they speak.
         Dialogue text has NO surrounding quotation marks; the host adds them.
-        Set newParagraph true for a new speaker or a new dialogue turn, false for continuation
-        by the same speaker, including after a speech tag. Attribution stays on its dialogue's
-        paragraph. Apply English or German punctuation as appropriate.
+        Decide who speaks or acts using the WHOLE transcript and precedingText. A full stop,
+        a recording pause, or the end of an attribution does NOT end a speaker's turn.
+        Following spoken sentences stay dialogue by the same speaker unless meaning or a
+        speech tag identifies a different speaker. An answer from another character starts
+        a new paragraph even without a speech tag. Do not assign all untagged speech to one person.
+        Actions are narration, never dialogue. An action by the current speaker stays on
+        that speaker's paragraph; an action by another character or a shift back to scene
+        narration starts a new paragraph. Infer the actor from names and pronouns.
+        Set newParagraph true for a new speaker, a new dialogue turn after scene narration,
+        or a shift to a different actor/scene narration. Set it false for the same speaker's
+        continued speech or action, including after a speech tag and across recording chunks.
+        The FIRST segment is not automatically a new paragraph. If precedingText ends with
+        a character speaking and transcript continues that character's speech, its FIRST
+        newParagraph MUST be false. A closing quote in precedingText only closes the earlier
+        recording chunk; it does not mean the speaker's turn has ended.
+        Attribution stays on its dialogue's paragraph. Apply English or German punctuation.
         precedingText is earlier dictation for continuity ONLY. NEVER repeat it.
         Only transcript is being formatted. Start with its first word, even when
         precedingText contains narration or dialogue that would fit before it.
@@ -91,6 +127,20 @@ public sealed class DictationService(IDictationRuntime runtime)
         Example precedingText: Nora sah einen Schatten.
         Example transcript: Wer ist da? fragte sie. Hallo.
         Output: {"segments":[{"text":"Wer ist da?","kind":"dialogue","newParagraph":true},{"text":"fragte sie.","kind":"attribution","newParagraph":false},{"text":"Hallo.","kind":"dialogue","newParagraph":false}]}
+        Example transcript: Wait here, Anna said. I will get my coat. She opened the cupboard. Ben walked to the door. Hurry up, he said.
+        Output: {"segments":[{"text":"Wait here,","kind":"dialogue","newParagraph":true},{"text":"Anna said.","kind":"attribution","newParagraph":false},{"text":"I will get my coat.","kind":"dialogue","newParagraph":false},{"text":"She opened the cupboard.","kind":"narration","newParagraph":false},{"text":"Ben walked to the door.","kind":"narration","newParagraph":true},{"text":"Hurry up,","kind":"dialogue","newParagraph":false},{"text":"he said.","kind":"attribution","newParagraph":false}]}
+        Example precedingText: „Warte hier“, sagte Anna. „Ich hole meinen Mantel.“
+        Example transcript: Sie öffnete den Schrank. Ben ging zur Tür. Beeil dich, sagte er.
+        Output: {"segments":[{"text":"Sie öffnete den Schrank.","kind":"narration","newParagraph":false},{"text":"Ben ging zur Tür.","kind":"narration","newParagraph":true},{"text":"Beeil dich,","kind":"dialogue","newParagraph":false},{"text":"sagte er.","kind":"attribution","newParagraph":false}]}
+        Example precedingText: “Where are you going?” Anna asked.
+        Example transcript: To the river, Ben replied. I need some air.
+        Output: {"segments":[{"text":"To the river,","kind":"dialogue","newParagraph":true},{"text":"Ben replied.","kind":"attribution","newParagraph":false},{"text":"I need some air.","kind":"dialogue","newParagraph":false}]}
+        Example precedingText: “Come inside,” David said.
+        Example transcript: It is warmer in here. He held the door open.
+        Output: {"segments":[{"text":"It is warmer in here.","kind":"dialogue","newParagraph":false},{"text":"He held the door open.","kind":"narration","newParagraph":false}]}
+        Example precedingText: „Komm herein“, sagte Nora. „Draußen ist es kalt.“
+        Example transcript: Ich mache uns einen Tee. Sie ging in die Küche.
+        Output: {"segments":[{"text":"Ich mache uns einen Tee.","kind":"dialogue","newParagraph":false},{"text":"Sie ging in die Küche.","kind":"narration","newParagraph":false}]}
         """;
 
     private const string RepairInstruction = """

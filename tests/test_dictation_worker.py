@@ -102,7 +102,8 @@ class WorkerTests(unittest.TestCase):
                     WhisperForConditionalGeneration=Mock(from_pretrained=Mock(return_value=speech)),
                     WhisperProcessor=Mock(from_pretrained=Mock(return_value=processor)))
                 with patch.dict(sys.modules, {"torch": torch, "transformers": transformers}), \
-                     patch.object(accelerated, "waveform", return_value=[0.5]):
+                     patch.object(accelerated, "waveform", return_value=[0.5]), \
+                     patch.object(accelerated, "filter_speech", side_effect=lambda samples: samples):
                     engine = accelerated.TorchEngine(Path("root"), worker.SPEECH_TORCH["large-v3"], worker.DIALOGUE["4B"], backend)
                     engine.dialogue = Mock()
                     result = engine.transcribe(b"audio", language)
@@ -144,7 +145,8 @@ class WorkerTests(unittest.TestCase):
         with patch.dict(sys.modules, {"mlx": mlx, "mlx.core": mx, "mlx_whisper": speech,
                 "mlx_lm": lm, "mlx_lm.sample_utils": types.SimpleNamespace(make_sampler=Mock())}), \
              patch("platform.system", return_value="Darwin"), patch("platform.machine", return_value="arm64"), \
-             patch.object(accelerated, "waveform", return_value=[0.5]):
+             patch.object(accelerated, "waveform", return_value=[0.5]), \
+             patch.object(accelerated, "filter_speech", side_effect=lambda samples: samples):
             engine = accelerated.MlxEngine(Path("root"), worker.SPEECH_MLX["small"], worker.DIALOGUE["4B"])
             self.assertEqual(engine.transcribe(b"audio", "de"), "Hallo.")
             result = engine.run({"operation": "format", "language": "de", "instruction": "format",
@@ -163,6 +165,31 @@ class WorkerTests(unittest.TestCase):
              self.assertRaises(RuntimeError):
             accelerated.MlxEngine(Path("root"), worker.SPEECH_MLX["small"], worker.DIALOGUE["4B"])
         mx.eval.assert_not_called()
+
+    def test_non_speech_never_reaches_gpu_or_mlx_recognition(self):
+        for engine_type in (accelerated.TorchEngine, accelerated.MlxEngine):
+            with self.subTest(engine=engine_type.__name__), \
+                 patch.dict(sys.modules, {"mlx_whisper": Mock()}), \
+                 patch.object(accelerated, "waveform", return_value=[0.1] * 16000), \
+                 patch.object(accelerated, "filter_speech", return_value=[]) as gate:
+                engine = object.__new__(engine_type)
+                engine.load_speech = Mock(side_effect=AssertionError("Noise must not load recognition"))
+                self.assertEqual(engine.transcribe(b"noise", "en"), "")
+                gate.assert_called_once()
+                engine.load_speech.assert_not_called()
+
+    def test_vad_removes_noise_and_keeps_all_detected_speech_with_padding(self):
+        samples = list(range(100))
+        spans = [{"start": 10, "end": 30}, {"start": 60, "end": 90}]
+        vad = types.SimpleNamespace(get_speech_timestamps=Mock(return_value=spans), VadOptions=Mock())
+        numpy = types.SimpleNamespace(concatenate=lambda chunks: [sample for chunk in chunks for sample in chunk])
+        with patch.dict(sys.modules, {"numpy": numpy, "faster_whisper": types.ModuleType("faster_whisper"), "faster_whisper.vad": vad}):
+            self.assertEqual(worker.filter_speech(samples), samples[10:30] + samples[60:90])
+            vad.get_speech_timestamps.return_value = []
+            self.assertEqual(worker.filter_speech(samples), [])
+            self.assertEqual(worker.filter_speech([]), [])
+        self.assertEqual(vad.VadOptions.call_args.kwargs["min_speech_duration_ms"], 120)
+        self.assertEqual(vad.VadOptions.call_args.kwargs["speech_pad_ms"], 250)
 
 
 if __name__ == "__main__":

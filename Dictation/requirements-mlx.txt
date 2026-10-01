@@ -4,4 +4,8 @@ mlx-whisper==0.4.3
 transformers==4.57.3
 huggingface-hub==0.36.0
 numpy==1.26.4
+# Use the same local speech gate as the CPU and CUDA/ROCm paths.
+faster-whisper==1.2.1
+av==16.0.1
+ctranslate2==4.8.2
 torch==2.9.1

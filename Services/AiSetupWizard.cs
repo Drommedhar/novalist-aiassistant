@@ -9,15 +9,20 @@ using Novalist.Sdk.Models.Wizards;
 namespace Novalist.Extensions.AiAssistant.Services;
 
 /// <summary>
-/// One-shot setup wizard that asks the user to choose an AI provider and
-/// configure the minimum settings needed to make AI features work
-/// (provider, model, base URL or path, API token, response language).
+/// One-shot setup for independently enabled AI assistance and local dictation.
 /// </summary>
 public static class AiSetupWizard
 {
     public const string Id = "extension.ai.setup";
 
     private static readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(5) };
+
+    public static bool ShouldOffer(AiSettings settings, bool hasSavedDictationChoice = false)
+        => !settings.SetupCompleted && !settings.Enabled
+            && !(hasSavedDictationChoice && settings.DictationEnabled)
+            && string.IsNullOrWhiteSpace(settings.LmStudioModel)
+            && string.IsNullOrWhiteSpace(settings.CopilotModel)
+            && string.IsNullOrWhiteSpace(settings.AnthropicApiKey);
 
     public static WizardDefinition Build(Func<string, string>? loc = null)
     {
@@ -27,20 +32,22 @@ public static class AiSetupWizard
         {
             Id = Id,
             DisplayName = T("wizard.ai.displayName", "AI Assistant — setup"),
-            Description = T("wizard.ai.description", "Pick a provider and fill in just enough to start chatting."),
+            Description = T("wizard.ai.description", "Set up AI assistance, local dictation, or both."),
             Scope = WizardScope.Reference,
             Steps =
             [
                 new ChoiceStep
                 {
-                    Id = "enabled",
-                    Title = T("wizard.ai.enabled.title", "Enable AI features?"),
-                    Help = T("wizard.ai.enabled.help", "Master toggle. You can flip this off later in Settings → AI."),
+                    Id = "features",
+                    Title = T("wizard.ai.features.title", "Which features would you like?"),
+                    Help = T("wizard.ai.features.help", "AI assistance and dictation work independently. You can change this later in Settings → AI Assistant."),
                     Skippable = false,
                     Choices =
                     [
-                        new WizardChoice { Value = "true", Label = T("wizard.ai.enabled.yes", "Yes — set it up now") },
-                        new WizardChoice { Value = "false", Label = T("wizard.ai.enabled.no", "Not now") },
+                        new WizardChoice { Value = "ai", Label = T("wizard.ai.features.ai", "AI assistance only") },
+                        new WizardChoice { Value = "dictation", Label = T("wizard.ai.features.dictation", "Local dictation only") },
+                        new WizardChoice { Value = "ai,dictation", Label = T("wizard.ai.features.both", "Both") },
+                        new WizardChoice { Value = "none", Label = T("wizard.ai.enabled.no", "Not now") },
                     ],
                 },
                 new ChoiceStep
@@ -49,7 +56,7 @@ public static class AiSetupWizard
                     Title = T("wizard.ai.provider.title", "Which provider?"),
                     Help = T("wizard.ai.provider.help", "Choose your local AI server, hosted service, or command-line tool."),
                     Skippable = false,
-                    VisibleWhen = new WizardCondition { StepId = "enabled", Operator = "equals", Value = "true" },
+                    VisibleWhen = new WizardCondition { StepId = "features", Operator = "contains", Value = "ai" },
                     Choices = AiProviders.Labels.Select(p => new WizardChoice
                     {
                         Value = p.Key,
@@ -119,7 +126,45 @@ public static class AiSetupWizard
                     Title = T("wizard.ai.responseLanguage.title", "Response language"),
                     Help = T("wizard.ai.responseLanguage.help", "Empty = follow the app's UI language."),
                     Placeholder = T("wizard.ai.responseLanguage.placeholder", "English"),
-                    VisibleWhen = new WizardCondition { StepId = "enabled", Operator = "equals", Value = "true" },
+                    VisibleWhen = new WizardCondition { StepId = "features", Operator = "contains", Value = "ai" },
+                },
+                new ChoiceStep
+                {
+                    Id = "dictationAcceleration", Title = T("dictation.acceleration", "Acceleration"),
+                    Help = T("dictation.accelerationHelp", "Choose Automatic or the accelerator for this computer."),
+                    Skippable = false,
+                    VisibleWhen = new WizardCondition { StepId = "features", Operator = "contains", Value = "dictation" },
+                    Choices = DictationHardware.Choices.Select(value => new WizardChoice
+                    {
+                        Value = value, Label = value == "auto" ? T("dictation.automatic", "Automatic") : value.ToUpperInvariant()
+                    }).ToList(),
+                },
+                new ChoiceStep
+                {
+                    Id = "dictationModel", Title = T("dictation.model", "Speech recognition model"),
+                    Help = T("dictation.help", "English and German dictation runs locally and independently of the chat provider."),
+                    Skippable = false,
+                    VisibleWhen = new WizardCondition { StepId = "features", Operator = "contains", Value = "dictation" },
+                    Choices = new[] { ("base", "Whisper Base (~150–300 MB)"), ("small", "Whisper Small (~500 MB–1 GB)"),
+                        ("medium", "Whisper Medium (~1.5–3.1 GB)"), ("large-v3", "Whisper Large v3 (~3.1 GB)") }
+                        .Select(p => new WizardChoice { Value = p.Item1, Label = p.Item2 }).ToList(),
+                },
+                new ChoiceStep
+                {
+                    Id = "dictationDialogueModel", Title = T("dictation.dialogueModel", "Dialogue detection model"),
+                    Skippable = false,
+                    VisibleWhen = new WizardCondition { StepId = "features", Operator = "contains", Value = "dictation" },
+                    Choices = [new() { Value = "1.7B", Label = "Qwen3 1.7B (~3.5 GB)" },
+                        new() { Value = "4B", Label = "Qwen3 4B (~8 GB)" }],
+                },
+                new ChoiceStep
+                {
+                    Id = "prepareDictation", Title = T("dictation.prepare", "Download / repair dictation models"),
+                    Help = T("wizard.ai.download.help", "Download and check the selected models after finishing setup. Existing models are reused. Internet and additional disk space are needed for setup; dictation then works offline."),
+                    Skippable = false,
+                    VisibleWhen = new WizardCondition { StepId = "features", Operator = "contains", Value = "dictation" },
+                    Choices = [new() { Value = "true", Label = T("wizard.ai.download.now", "Download after setup") },
+                        new() { Value = "false", Label = T("wizard.ai.download.later", "Download later in settings") }],
                 },
             ],
         };
@@ -128,9 +173,25 @@ public static class AiSetupWizard
     /// <summary>Maps the wizard's answers onto the AiSettings record.</summary>
     public static bool Apply(AiSettings settings, WizardResult result)
     {
-        var enabled = string.Equals(result.GetText("enabled"), "true", System.StringComparison.OrdinalIgnoreCase);
-        settings.Enabled = enabled;
-        if (!enabled) return true;
+        if (!result.Completed) return false;
+        var features = result.GetText("features");
+        if (features is not ("ai" or "dictation" or "ai,dictation" or "none")) return false;
+        var dictation = features is "dictation" or "ai,dictation";
+        if (dictation)
+        {
+            var speech = result.GetText("dictationModel");
+            var dialogue = result.GetText("dictationDialogueModel");
+            var acceleration = result.GetText("dictationAcceleration");
+            LocalDictationRuntime.ValidateModels(speech, dialogue);
+            if (!DictationHardware.Choices.Contains(acceleration)) throw new ArgumentException("Choose a supported dictation accelerator.");
+            settings.DictationModel = speech;
+            settings.DictationDialogueModel = dialogue;
+            settings.DictationAcceleration = acceleration;
+        }
+        settings.Enabled = features is "ai" or "ai,dictation";
+        settings.DictationEnabled = dictation;
+        settings.SetupCompleted = true;
+        if (!settings.Enabled) return true;
 
         var provider = result.GetText("provider") ?? AiProviders.Selected(settings);
         var values = new Dictionary<string, string> { ["provider"] = provider };
@@ -167,7 +228,14 @@ public static class AiSetupWizard
         var provider = AiProviders.Selected(settings);
         var seed = new WizardResult { DefinitionId = Id };
         void Set(string key, string value) => seed.Answers[key] = new WizardAnswer { Text = value };
-        Set("enabled", settings.Enabled ? "true" : "false");
+        Set("features", (settings.Enabled, settings.DictationEnabled) switch
+        {
+            (true, true) => "ai,dictation", (true, false) => "ai", (false, true) => "dictation", _ => "none"
+        });
+        Set("dictationModel", settings.DictationModel);
+        Set("dictationDialogueModel", settings.DictationDialogueModel);
+        Set("dictationAcceleration", settings.DictationAcceleration);
+        Set("prepareDictation", "true");
         Set("provider", provider);
         foreach (var id in AiProviders.CompatibleIds)
         {

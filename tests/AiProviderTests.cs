@@ -117,7 +117,8 @@ public class AiProviderTests
         Assert.Contains(providers.Choices, c => c.Value == "ollama" && c.Label == "Ollama");
         var settings = new AiSettings { LmStudioModel = "lm-model", LmStudioApiToken = "lm-key" };
         var answers = AiSetupWizard.CreateSeed(settings);
-        answers.Answers["enabled"] = new WizardAnswer { Text = "true" };
+        answers.Completed = true;
+        answers.Answers["features"] = new WizardAnswer { Text = "ai" };
         answers.Answers["provider"] = new WizardAnswer { Text = "ollama" };
         answers.Answers["ollamaModel"] = new WizardAnswer { Text = "ollama-model" };
         AiSetupWizard.Apply(settings, answers);

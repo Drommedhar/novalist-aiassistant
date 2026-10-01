@@ -333,7 +333,7 @@
         "help": "Pfad oder Befehlsname. \"copilot\" funktioniert, wenn die Datei im PATH liegt.",
         "title": "Copilot-CLI-Pfad"
       },
-      "description": "Wähle einen Anbieter und gib nur das Nötigste ein, um loszulegen.",
+      "description": "KI-Unterstützung, lokales Diktieren oder beides einrichten.",
       "endpoint": {
         "help": "Verwende die Standardadresse oder gib die Adresse deines Servers ein.",
         "modelHelp": "Wähle ein Modell des ausgewählten Dienstes.",
@@ -383,6 +383,18 @@
       "claudeModel": {
         "title": "Claude-Modell",
         "help": "Ein Alias, den die CLI annimmt: sonnet, opus, haiku oder fable."
+      },
+      "features": {
+        "title": "Welche Funktionen möchtest du nutzen?",
+        "help": "KI-Unterstützung und Diktieren funktionieren unabhängig voneinander. Du kannst dies später unter Einstellungen → KI-Assistent ändern.",
+        "ai": "Nur KI-Unterstützung",
+        "dictation": "Nur lokales Diktieren",
+        "both": "Beides"
+      },
+      "download": {
+        "help": "Die ausgewählten Modelle nach der Einrichtung herunterladen und prüfen. Vorhandene Modelle werden wiederverwendet. Die Einrichtung benötigt Internet und zusätzlichen Speicherplatz; danach funktioniert das Diktieren offline.",
+        "now": "Nach der Einrichtung herunterladen",
+        "later": "Später in den Einstellungen herunterladen"
       }
     },
     "knowledgeMigration": {
