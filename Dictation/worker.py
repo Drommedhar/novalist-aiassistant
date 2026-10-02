@@ -53,6 +53,15 @@ def model_path(root, model):
     return root / "models" / (model[0].replace("/", "--") + "-" + model[1])
 
 
+def vocabulary_prompt(terms):
+    if (not isinstance(terms, list) or len(terms) > 128
+            or any(not isinstance(term, str) or not term.strip() or len(term) > 80
+                   or any(ord(char) < 32 or ord(char) == 127 for char in term) for term in terms)
+            or sum(len(term) + 2 for term in terms) > 2000):
+        raise ValueError("Invalid vocabulary")
+    return ", ".join(dict.fromkeys(term.strip() for term in terms))
+
+
 def prepare(root, speech, dialogue, repair=False, backend="cpu"):
     # Validate accelerator availability before downloading model weights.
     engine = create_engine(root, speech, dialogue, backend)
@@ -129,7 +138,10 @@ class Engine:
         if request["operation"] == "warmup":
             # Load both before the first audio clip. GPU adapters retain the
             # inactive model in RAM; leave speech in VRAM for the first clip.
-            self.load_dialogue()
+            if request.get("automaticDialogue", True):
+                self.load_dialogue()
+            else:
+                self.dialogue = self.tokenizer = None
             self.load_speech()
             return ""
         if request.get("language") not in ("en", "de"):
@@ -138,7 +150,7 @@ class Engine:
             audio = base64.b64decode(request["audio"], validate=True)
             if len(audio) > 8 * 1024 * 1024:
                 raise ValueError("Audio too large")
-            return self.transcribe(audio, request["language"])
+            return self.transcribe(audio, request["language"], vocabulary_prompt(request.get("vocabulary", [])))
         if request["operation"] != "format":
             raise ValueError("Unsupported operation")
         self.load_dialogue()
@@ -150,12 +162,12 @@ class Engine:
         ]
         return self.format(messages, request["transcript"])
 
-    def transcribe(self, audio, language):
+    def transcribe(self, audio, language, vocabulary=""):
         self.load_speech()
         segments, _ = self.speech.transcribe(io.BytesIO(audio), language=language,
             task="transcribe", beam_size=5, vad_filter=True, vad_parameters=VAD_OPTIONS,
             temperature=0, no_speech_threshold=0.6, log_prob_threshold=-1.0,
-            condition_on_previous_text=False)
+            condition_on_previous_text=False, initial_prompt=vocabulary or None)
         return " ".join(segment.text.strip() for segment in segments).strip()
 
     def format(self, messages, transcript):

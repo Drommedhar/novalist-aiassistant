@@ -36,7 +36,7 @@ class TorchEngine(Engine):
         # Qwen3 4B are selected together. The inactive model stays in host RAM.
         if self.dialogue is not None:
             self.dialogue.to("cpu")
-            self.torch.cuda.empty_cache()
+        self.torch.cuda.empty_cache()
         if self.speech is None:
             self.processor = WhisperProcessor.from_pretrained(str(self.speech_path), local_files_only=True)
             self.speech = WhisperForConditionalGeneration.from_pretrained(str(self.speech_path),
@@ -57,19 +57,20 @@ class TorchEngine(Engine):
                 attn_implementation="sdpa").eval()
         self.dialogue.to("cuda")
 
-    def transcribe(self, audio, language):
+    def transcribe(self, audio, language, vocabulary=""):
         samples = filter_speech(waveform(audio))
         if not len(samples):
             return ""
         self.load_speech()
         inputs = self.processor(samples, sampling_rate=16000, return_tensors="pt",
             return_attention_mask=True, truncation=False, padding="longest")
+        prompt = self.processor.get_prompt_ids(vocabulary, return_tensors="pt")[:224].to("cuda") if vocabulary else None
         with self.torch.inference_mode():
             result = self.speech.generate(
                 inputs.input_features.to("cuda", dtype=self.torch.float16),
                 attention_mask=inputs.attention_mask.to("cuda"),
                 language=language, task="transcribe", do_sample=False, num_beams=5,
-                return_timestamps=len(samples) > 30 * 16000, condition_on_prev_tokens=False)
+                return_timestamps=len(samples) > 30 * 16000, condition_on_prev_tokens=False, prompt_ids=prompt)
         return self.processor.batch_decode(result, skip_special_tokens=True)[0].strip()
 
     def format(self, messages, transcript):
@@ -115,7 +116,7 @@ class MlxEngine(Engine):
             self.dialogue, self.tokenizer = load(str(self.dialogue_path / "mlx-int8"),
                 tokenizer_config={"local_files_only": True, "trust_remote_code": False})
 
-    def transcribe(self, audio, language):
+    def transcribe(self, audio, language, vocabulary=""):
         import mlx_whisper
         samples = filter_speech(waveform(audio))
         if not len(samples):
@@ -123,7 +124,7 @@ class MlxEngine(Engine):
         # Supplying samples avoids mlx-whisper's external ffmpeg executable.
         result = mlx_whisper.transcribe(samples, path_or_hf_repo=str(self.speech_path),
             language=language, task="transcribe", temperature=0, no_speech_threshold=0.6,
-            logprob_threshold=-1.0, condition_on_previous_text=False, verbose=None)
+            logprob_threshold=-1.0, condition_on_previous_text=False, verbose=None, initial_prompt=vocabulary or None)
         return result["text"].strip()
 
     def format(self, messages, transcript):

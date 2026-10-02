@@ -8,7 +8,7 @@ using Novalist.Sdk.Services;
 
 namespace Novalist.Extensions.AiAssistant;
 
-public sealed class AiAssistantExtension : IExtension, IStatusBarContributor, IRibbonContributor, ISettingsSchemaContributor, IGrammarCheckContributor, IArticleGeneratorContributor, IEntityExtractionContributor, IContextMenuContributor, IWizardContributor, IDictationContributor, IDictationWarmupContributor, Novalist.Sdk.Hooks.IWebViewContributor
+public sealed class AiAssistantExtension : IExtension, IStatusBarContributor, IRibbonContributor, ISettingsSchemaContributor, IGrammarCheckContributor, IArticleGeneratorContributor, IEntityExtractionContributor, IContextMenuContributor, IWizardContributor, IDictationContributor, IDictationWarmupContributor, IDictationOptionsContributor, Novalist.Sdk.Hooks.IWebViewContributor
 {
     public string Id => "com.novalist.ai";
     public string DisplayName => "AI Assistant";
@@ -48,8 +48,13 @@ public sealed class AiAssistantExtension : IExtension, IStatusBarContributor, IR
     public string FormattingDestination => "Qwen3 " + Settings.DictationDialogueModel;
     public Task WarmUpAsync(CancellationToken cancellationToken = default)
         => _dictation!.WarmUpAsync(Settings, cancellationToken);
+    public Task WarmUpAsync(bool automaticDialogue, CancellationToken cancellationToken = default)
+        => _dictation!.WarmUpAsync(Settings, cancellationToken, automaticDialogue);
     public Task<string> TranscribeAsync(byte[] audio, string mimeType, string language, CancellationToken cancellationToken = default)
         => _dictation!.TranscribeAsync(Settings, audio, mimeType, language, cancellationToken);
+    public Task<string> TranscribeAsync(byte[] audio, string mimeType, string language,
+        IReadOnlyList<string> vocabulary, CancellationToken cancellationToken = default)
+        => _dictation!.TranscribeAsync(Settings, audio, mimeType, language, cancellationToken, vocabulary);
 
     public Task<IReadOnlyList<DictationSegment>> DetectDialogueAsync(string transcript, string language, string precedingText,
         CancellationToken cancellationToken = default)

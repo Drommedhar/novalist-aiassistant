@@ -36,16 +36,19 @@ public sealed class LocalDictationRuntime : IDictationRuntime
         "requirements-cuda.txt", "requirements-rocm-windows.txt", "requirements-rocm-linux.txt", "requirements-mlx.txt"];
     private readonly Dictionary<string, byte[]> _resources = ResourceFiles.ToDictionary(file => file, Resource);
     private readonly string _recipe;
-    // CPU already includes Silero VAD. GPU/MLX need one preparation pass for
-    // the added packages. Gate exact recipes (LF/CRLF) so future dependency
-    // changes cannot accidentally reuse an incompatible environment.
+    // Options only change worker code; current environments can upgrade in
+    // place. Older CPU environments also have Silero; older GPU/MLX recipes
+    // still need preparation. Gate exact LF/CRLF recipes so dependency changes
+    // cannot accidentally reuse an incompatible environment.
     private bool CompatibleRecipe(string installed, string backend) => installed == _recipe ||
-        (backend == "cpu" && (_recipe is "1FAC0972CF15740A94C07A7E7E06384B0DE1AAA824BD5E2FC4E06835FB919A35"
+        ((_recipe is "A1D03B150BB5D6D1EA98FF128391CBBA0ED0A7403D223E20CB5ADC2490D8EEED"
+            or "F1D399741BFD00436A021FB0D82DF23163A9A541E646E4472A9A52CAFD1285DD")
+        && ((installed is "1FAC0972CF15740A94C07A7E7E06384B0DE1AAA824BD5E2FC4E06835FB919A35"
             or "DCFD3418D493242F6964A1D0FBF56CA84741FD7C634EE4AC17B3047D27091A38")
-        && (installed is "265BC0124E3B4C5541510EBD3B9652603B8D891C08AF099CEFC2392F9962D7AC"
+        || (backend == "cpu" && (installed is "265BC0124E3B4C5541510EBD3B9652603B8D891C08AF099CEFC2392F9962D7AC"
             or "371BBE9496A758E93B8590C2349D01D46506FD5D6D2916F7FA481D8D83A128C9"
             or "B37107DB793DD7DC4573CEB84A2C78D533650AA91B43B3B868B63CDF8604BF8F"
-            or "DCD002304D36BB1F0646ECE204238E31C66ADB4AF9CB3BCB14333F7DA79E42E6"));
+            or "DCD002304D36BB1F0646ECE204238E31C66ADB4AF9CB3BCB14333F7DA79E42E6"))));
     private string Venv(string backend) => Path.Combine(_root,
         (backend == "cpu" ? "venv" : "venv-" + backend)
         + (OperatingSystem.IsMacOS() ? "-" + RuntimeInformation.ProcessArchitecture : ""));

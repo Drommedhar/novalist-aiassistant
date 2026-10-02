@@ -6,20 +6,24 @@ using Xunit;
 
 /// <summary>Text-only regression test against installed models; no downloads or microphone.
 /// Set NOVALIST_DICTATION_INTEGRATION=1 and PYTHONPATH to tests/offline_guard.
-/// NOVALIST_DICTATION_ACCELERATION selects the prepared backend (default: auto).</summary>
+/// NOVALIST_DICTATION_ACCELERATION selects the prepared backend (default: auto).
+/// NOVALIST_DICTATION_SPEECH_MODEL selects the prepared speech model (default: small).</summary>
 public class DictationDialogueIntegrationTests(ITestOutputHelper output)
 {
     public static bool Enabled => DictationOfflineIntegrationTests.Enabled;
+
+    private static AiSettings PreparedSettings => new()
+    {
+        DictationModel = Environment.GetEnvironmentVariable("NOVALIST_DICTATION_SPEECH_MODEL") ?? "small",
+        DictationAcceleration = Environment.GetEnvironmentVariable("NOVALIST_DICTATION_ACCELERATION") ?? "auto"
+    };
 
     [Fact(SkipUnless = nameof(Enabled), Skip = "Opt in with prepared models and the offline network guard.")]
     public async Task UnquotedQuestionsKeepNarrationSpeechAndTagsSeparate()
     {
         Assert.Contains("offline_guard", Environment.GetEnvironmentVariable("PYTHONPATH") ?? "");
         using var runtime = new LocalDictationRuntime();
-        var settings = new AiSettings
-        {
-            DictationAcceleration = Environment.GetEnvironmentVariable("NOVALIST_DICTATION_ACCELERATION") ?? "auto"
-        };
+        var settings = PreparedSettings;
         Assert.True(runtime.IsReady(settings.DictationModel, settings.DictationDialogueModel, settings.DictationAcceleration));
         var service = new DictationService(runtime);
         using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(10));
@@ -65,15 +69,22 @@ public class DictationDialogueIntegrationTests(ITestOutputHelper output)
         => segments.SelectMany(s => Regex.Matches(s.Text, @"[\p{L}\p{M}\p{N}]+")
             .Select(m => (m.Value.ToUpperInvariant(), s.Kind)));
 
+    private static IEnumerable<int> Paragraphs(IEnumerable<DictationSegment> segments)
+    {
+        var word = 0;
+        foreach (var segment in segments)
+        {
+            if (segment.NewParagraph) yield return word;
+            word += Regex.Matches(segment.Text, @"[\p{L}\p{M}\p{N}]+").Count;
+        }
+    }
+
     [Fact(SkipUnless = nameof(Enabled), Skip = "Opt in with prepared models and the offline network guard.")]
     public async Task FollowingSpeechAndActionsKeepTheirSpeakerAcrossChunks()
     {
         Assert.Contains("offline_guard", Environment.GetEnvironmentVariable("PYTHONPATH") ?? "");
         using var runtime = new LocalDictationRuntime();
-        var settings = new AiSettings
-        {
-            DictationAcceleration = Environment.GetEnvironmentVariable("NOVALIST_DICTATION_ACCELERATION") ?? "auto"
-        };
+        var settings = PreparedSettings;
         var service = new DictationService(runtime);
         using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(10));
         (string Language, string Context, DictationSegment[] Expected)[] passages =
@@ -95,16 +106,70 @@ public class DictationDialogueIntegrationTests(ITestOutputHelper output)
             var actual = await service.DetectDialogueAsync(settings, transcript, language, context, timeout.Token);
             output.WriteLine(System.Text.Json.JsonSerializer.Serialize(actual));
             Assert.Equal(ClassifiedWords(expected), ClassifiedWords(actual));
-            static IEnumerable<int> Paragraphs(IEnumerable<DictationSegment> segments)
-            {
-                var word = 0;
-                foreach (var segment in segments)
-                {
-                    if (segment.NewParagraph) yield return word;
-                    word += Regex.Matches(segment.Text, @"[\p{L}\p{M}\p{N}]+").Count;
-                }
-            }
             Assert.Equal(Paragraphs(expected), Paragraphs(actual));
+        }
+    }
+
+    [Fact(SkipUnless = nameof(Enabled), Skip = "Opt in with prepared models and the offline network guard.")]
+    public async Task HeardVoiceTagsKeepContinuedSpeechSeparateFromSceneNarration()
+    {
+        Assert.Contains("offline_guard", Environment.GetEnvironmentVariable("PYTHONPATH") ?? "");
+        using var runtime = new LocalDictationRuntime();
+        var settings = PreparedSettings;
+        Assert.True(runtime.IsReady(settings.DictationModel, settings.DictationDialogueModel, settings.DictationAcceleration));
+        var service = new DictationService(runtime);
+        // This batch has more cases than the smaller dialogue regressions;
+        // quantized CPU inference needs a longer overall test deadline.
+        using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(20));
+        DictationSegment[] gatePassage =
+        [
+            new("Langsam öffnete sich das Tor vor den Mauern.", "narration"),
+            new("Tretet hinein, werte neue Schüler", "dialogue", true),
+            new("hörte man eine Stimme laut durch die Hallen rufen.", "attribution"),
+            new("Wir haben euch alle bereits erwartet.", "dialogue"),
+            new("Langsam und vorsichtig begann Liam seinen Weg durch das große, hölzerne Tor.", "narration", true)
+        ];
+        var transcript = string.Join(" ", gatePassage.Select(s => s.Text));
+        (string Language, string Context, string Transcript, DictationSegment[] Expected)[] passages =
+        [
+            ("de", "", transcript, gatePassage),
+            ("de", "", transcript.Replace("Schüler hörte", "Schüler, hörte"), gatePassage),
+            // Copied quotes must not hide a reporting clause inside the speech.
+            ("de", "", gatePassage[0].Text + " »" + gatePassage[1].Text + ", "
+                + gatePassage[2].Text.TrimEnd('.') + "«, "
+                + string.Join(" ", gatePassage.Skip(3).Select(s => s.Text)), gatePassage),
+            ("de", "", transcript.Replace("Schüler hörte", "Schüler, hörte")
+                .Replace("rufen. Wir", "rufen, Wir"), gatePassage),
+            ("de", gatePassage[0].Text, string.Join(" ", gatePassage.Skip(1).Select(s => s.Text)), gatePassage[1..]),
+            // An 800 ms recording pause can split the reporting clause itself.
+            ("de", gatePassage[0].Text, gatePassage[1].Text + ", hörte man eine Stimme",
+                [gatePassage[1], new("hörte man eine Stimme", "attribution")]),
+            ("de", "»Tretet hinein, werte neue Schüler«, hörte man eine Stimme",
+                "laut durch die Hallen rufen. " + string.Join(" ", gatePassage.Skip(3).Select(s => s.Text)),
+                [new("laut durch die Hallen rufen.", "attribution"), .. gatePassage[3..]]),
+            ("de", "»Tretet hinein, werte neue Schüler«, hörte man eine Stimme laut durch die Hallen rufen.",
+                string.Join(" ", gatePassage.Skip(3).Select(s => s.Text)), gatePassage[3..]),
+            ("de", "»Tretet hinein, werte neue Schüler.«",
+                string.Join(" ", gatePassage.Skip(2).Select(s => s.Text)), gatePassage[2..]),
+            ("en", "", "The doors creaked open. Enter, new students, a voice called from deep within the hall. We have been expecting you. Leo crossed the threshold.",
+                [new("The doors creaked open.", "narration"), new("Enter, new students,", "dialogue", true),
+                 new("a voice called from deep within the hall.", "attribution"),
+                 new("We have been expecting you.", "dialogue"), new("Leo crossed the threshold.", "narration", true)]),
+            ("de", "", "Liam hörte eine Stimme laut durch die Hallen rufen. Er konnte die Worte nicht verstehen.",
+                [new("Liam hörte eine Stimme laut durch die Hallen rufen. Er konnte die Worte nicht verstehen.", "narration")]),
+            ("de", "", "Man hörte eine Stimme rufen, dass die Schüler erwartet wurden. Liam ging weiter.",
+                [new("Man hörte eine Stimme rufen, dass die Schüler erwartet wurden. Liam ging weiter.", "narration")]),
+            ("en", "", "Leo heard a voice calling from the hall. He could not make out the words.",
+                [new("Leo heard a voice calling from the hall. He could not make out the words.", "narration")])
+        ];
+        foreach (var (language, context, text, expected) in passages)
+        {
+            output.WriteLine($"{language}, context: {context}, transcript: {text}");
+            var actual = await service.DetectDialogueAsync(settings, text, language, context, timeout.Token);
+            output.WriteLine(System.Text.Json.JsonSerializer.Serialize(actual));
+            Assert.Equal(ClassifiedWords(expected), ClassifiedWords(actual));
+            if (expected.Any(s => s.Kind == "dialogue"))
+                Assert.Equal(Paragraphs(expected), Paragraphs(actual));
         }
     }
 }

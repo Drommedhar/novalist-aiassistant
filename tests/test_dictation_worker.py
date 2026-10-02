@@ -27,6 +27,27 @@ class WorkerTests(unittest.TestCase):
             self.assertEqual(engine.run({"operation": "warmup"}), "")
             self.assertEqual(calls, ["dialogue", "speech"])
 
+    def test_plain_warmup_releases_dialogue_and_loads_only_speech(self):
+        for engine_type in (worker.Engine, accelerated.TorchEngine, accelerated.MlxEngine):
+            engine = object.__new__(engine_type)
+            engine.dialogue = engine.tokenizer = object()
+            engine.load_dialogue = Mock(side_effect=AssertionError("Dialogue must stay unloaded"))
+            engine.load_speech = Mock()
+            self.assertEqual(engine.run({"operation": "warmup", "automaticDialogue": False}), "")
+            self.assertIsNone(engine.dialogue)
+            self.assertIsNone(engine.tokenizer)
+            engine.load_speech.assert_called_once()
+
+    def test_vocabulary_is_bounded_and_invalid_terms_never_reach_recognition(self):
+        engine = worker.Engine(Path("root"), worker.SPEECH["small"], worker.DIALOGUE["4B"])
+        engine.transcribe = Mock()
+        for terms in ("Name", [None], [""], ["a" * 81], ["A\nB"], ["Name"] * 129, ["a" * 79] * 25):
+            with self.subTest(terms=type(terms)):
+                with self.assertRaises(ValueError):
+                    engine.run({"operation": "transcribe", "audio": "AQ==", "language": "en", "vocabulary": terms})
+        engine.transcribe.assert_not_called()
+        self.assertEqual(worker.vocabulary_prompt([" Aeloria ", "Großwald", "Aeloria"]), "Aeloria, Großwald")
+
     def test_generation_stops_at_a_complete_object_even_with_extra_closing_text_in_the_token(self):
         expected = '{"segments":[{"text":"Hallo.","kind":"dialogue"}]}'
         for suffix in ("", "}", "\n```", " Here is an explanation."):
@@ -45,7 +66,7 @@ class WorkerTests(unittest.TestCase):
                 module = types.SimpleNamespace(WhisperModel=Mock(return_value=speech))
                 with patch.dict("sys.modules", {"faster_whisper": module}):
                     result = engine.run({"operation": "transcribe", "language": language,
-                                         "audio": base64.b64encode(b"audio").decode()})
+                                         "audio": base64.b64encode(b"audio").decode(), "vocabulary": ["Aeloria", "Großwald"]})
                 self.assertEqual(result, "Hallo Welt.")
                 self.assertEqual(module.WhisperModel.call_args.args[0], str(worker.model_path(Path("root"), model)))
                 self.assertTrue(module.WhisperModel.call_args.kwargs["local_files_only"])
@@ -54,6 +75,7 @@ class WorkerTests(unittest.TestCase):
                 self.assertEqual(options["language"], language)
                 self.assertEqual(options["task"], "transcribe")
                 self.assertTrue(options["vad_filter"])
+                self.assertEqual(options["initial_prompt"], "Aeloria, Großwald")
                 self.assertEqual(speech.transcribe.call_args.args[0].read(), b"audio")
 
     def test_protocol_recovers_after_errors_and_keeps_diagnostics_off_stdout(self):
@@ -106,13 +128,15 @@ class WorkerTests(unittest.TestCase):
                      patch.object(accelerated, "filter_speech", side_effect=lambda samples: samples):
                     engine = accelerated.TorchEngine(Path("root"), worker.SPEECH_TORCH["large-v3"], worker.DIALOGUE["4B"], backend)
                     engine.dialogue = Mock()
-                    result = engine.transcribe(b"audio", language)
+                    result = engine.transcribe(b"audio", language, "Aeloria, Großwald")
                 self.assertEqual(result, "Dictated words.")
                 speech.to.assert_called_with("cuda")  # PyTorch uses this name for ROCm too.
                 engine.dialogue.to.assert_called_with("cpu")
                 self.assertTrue(transformers.WhisperForConditionalGeneration.from_pretrained.call_args.kwargs["local_files_only"])
                 self.assertEqual(speech.generate.call_args.kwargs["language"], language)
                 self.assertEqual(speech.generate.call_args.kwargs["task"], "transcribe")
+                processor.get_prompt_ids.assert_called_once_with("Aeloria, Großwald", return_tensors="pt")
+                self.assertIsNotNone(speech.generate.call_args.kwargs["prompt_ids"])
 
     def test_wrong_gpu_wheel_or_missing_driver_fails_instead_of_using_cpu_silently(self):
         for available, cuda, hip, backend in [(False, "12.8", None, "cuda"),
@@ -148,13 +172,14 @@ class WorkerTests(unittest.TestCase):
              patch.object(accelerated, "waveform", return_value=[0.5]), \
              patch.object(accelerated, "filter_speech", side_effect=lambda samples: samples):
             engine = accelerated.MlxEngine(Path("root"), worker.SPEECH_MLX["small"], worker.DIALOGUE["4B"])
-            self.assertEqual(engine.transcribe(b"audio", "de"), "Hallo.")
+            self.assertEqual(engine.transcribe(b"audio", "de", "Aeloria, Großwald"), "Hallo.")
             result = engine.run({"operation": "format", "language": "de", "instruction": "format",
                                  "transcript": "Hallo.", "precedingText": ""})
         self.assertEqual(json.loads(result)["segments"][0]["text"], "Hallo.")
         self.assertEqual(closed, [True])
         mx.set_default_device.assert_called_once_with(mx.gpu)
         self.assertEqual(speech.transcribe.call_args.kwargs["language"], "de")
+        self.assertEqual(speech.transcribe.call_args.kwargs["initial_prompt"], "Aeloria, Großwald")
         self.assertEqual(speech.transcribe.call_args.kwargs["path_or_hf_repo"], str(engine.speech_path))
         self.assertEqual(lm.load.call_args.kwargs["tokenizer_config"], {"local_files_only": True, "trust_remote_code": False})
 
