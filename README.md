@@ -1,6 +1,6 @@
 # Novalist AI Assistant Extension
 
-Bring the power of large language models directly into your Novalist writing workflow. The AI Assistant extension connects to a local or cloud AI provider and gives you two main tools: an **AI Chat** sidebar and a **Story Analysis** view — both fully aware of your book's chapters, scenes, and codex entities (characters, locations, items, lore, and custom types).
+The AI Assistant extension connects Novalist to a local or cloud AI provider for chat, story analysis and writing assistance. Chat uses the project context you select; analysis tools use the context needed for their selected task.
 
 ## What does this extension do?
 
@@ -44,12 +44,12 @@ There is no session length limit. Clips are processed in order, and the pending 
 
 ### AI Chat
 
-A chat panel that opens in the right sidebar. You can ask the AI anything about your story — brainstorm plot ideas, check character consistency, explore "what if" scenarios, or get writing feedback. The AI automatically receives your project's entity data (characters, locations, items, lore entries, and any custom entity types) as context, so its answers are grounded in your actual story world.
+A chat panel opens in the right sidebar for brainstorming, character consistency checks and writing feedback. Choose which scene, chapter, outline or characters to include with **Context**. An empty picker sends no automatic project roster. Selected characters follow the host's AI exclusions for entries and sections.
 
 - Streaming responses with live preview while the AI generates its answer.
-- Full conversation history within a session — the AI remembers earlier messages so you can have a natural back-and-forth.
+- Recent conversation turns fit within the configured context budget together with the system instructions, selected context and current message. Preview shows the complete assembled request, estimated input size, reserved output space and omitted context or older turns. Counts are estimates, not provider tokenizer measurements.
 - Support for models with a thinking/reasoning step (the thinking output is displayed in a collapsible section).
-- One-click chat clearing to start a fresh conversation.
+- Clearing chat cancels the current reply. Opening another project clears the old conversation and retires late responses.
 - A **Context** button that lets you say exactly what the model is told: this scene, the rest of the chapter, the outline, or particular characters. What you tick is what is sent — nothing is inferred, and if something had to be left out to fit the budget the panel says which.
 
 ### Editorial critique, in the margin
@@ -219,7 +219,7 @@ The extension ships with English and German translations. The UI language follow
 ### Prerequisites
 
 - [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0)
-- [Novalist.Sdk](https://www.nuget.org/packages/Novalist.Sdk/) (pulled automatically via NuGet)
+- A sibling `novalist-official` checkout for the default local SDK reference. Release and validation workflows pin its revision in `sdk-compatibility.json`.
 
 ### Build
 
@@ -229,9 +229,20 @@ dotnet build -c Release
 
 The build output will be automatically deployed to your local Novalist extensions folder.
 
+For verification without deploying to an installed app:
+
+```bash
+python tools/check-sdk-compatibility.py
+dotnet test tests/Novalist.Extensions.AiAssistant.Tests.csproj -c Release -p:SkipExtensionDeploy=true -m:1 -nr:false
+python -m unittest discover -s tests -p test_dictation_worker.py
+node --test tests/chat-web.test.cjs
+```
+
+Pull requests run these checks. Release packaging depends on their success and uses the same pinned SDK revision. Pass `-p:UseLocalSdk=false` to use the pinned SDK NuGet package instead of the sibling checkout.
+
 ## Requirements
 
-- Novalist **1.5.0** or later
+- Novalist **3.5.3** or later; the build contract targets SDK **13.4.0**.
 
 ## License
 

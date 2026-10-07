@@ -33,7 +33,10 @@ public sealed record ContextBlock(ContextTier Tier, string Heading, string Body,
 
 /// <summary>What was assembled and what had to go.</summary>
 public sealed record AssembledContext(
-    string Text, int EstimatedTokens, IReadOnlyList<string> Dropped);
+    string Text, int EstimatedTokens, IReadOnlyList<string> Dropped)
+{
+    internal IReadOnlyList<ContextBlock> Kept { get; init; } = [];
+}
 
 /// <summary>One line of the prompt preview: a block, its size, and its fate.</summary>
 public sealed record ContextLine(
@@ -141,16 +144,17 @@ public sealed class ContextEngine
 
         var assembled = text.ToString().TrimEnd();
         return new AssembledContext(
-            assembled, (int)Math.Ceiling(assembled.Length / CharactersPerToken), dropped);
+            assembled, (int)Math.Ceiling(assembled.Length / CharactersPerToken), dropped)
+        {
+            Kept = kept
+        };
     }
 
     /// <summary>
     /// The same assembly, with a line per block saying what it cost and whether
     /// it survived.
     ///
-    /// Built by assembling twice rather than by threading a report out of
-    /// <see cref="Assemble"/>: the preview must show exactly what the send path
-    /// produces, and the surest way to guarantee that is to call it.
+    /// Uses the same retained occurrences as <see cref="Assemble"/>.
     /// </summary>
     public ContextPreview Preview(IEnumerable<ContextBlock> blocks)
     {
@@ -161,21 +165,26 @@ public sealed class ContextEngine
             .ToList();
 
         var assembled = Assemble(all);
-        var dropped = assembled.Dropped.ToHashSet(StringComparer.Ordinal);
 
-        var lines = all
-            .Select(b => new ContextLine(
-                b.Tier.ToString(),
-                b.Heading,
-                b.Body.Trim().Length,
-                (int)Math.Ceiling(b.Body.Trim().Length / CharactersPerToken),
-                // A heading is what identifies a block to the writer and to the
-                // drop report alike, so that is what the two are matched on.
-                !dropped.Contains(b.Heading)))
-            .ToList();
+        var lines = Describe(all, assembled.Kept);
 
         return new ContextPreview(
             assembled.Text, assembled.EstimatedTokens, TokenBudget, lines);
+    }
+
+    internal static List<ContextLine> Describe(IEnumerable<ContextBlock> blocks, IEnumerable<ContextBlock> kept)
+    {
+        var remaining = new Dictionary<ContextBlock, int>(ReferenceEqualityComparer.Instance);
+        foreach (var block in kept)
+            remaining[block] = remaining.GetValueOrDefault(block) + 1;
+        return blocks.Select(block =>
+        {
+            var count = remaining.GetValueOrDefault(block);
+            if (count > 0) remaining[block] = count - 1;
+            var characters = block.Body.Trim().Length;
+            return new ContextLine(block.Tier.ToString(), block.Heading, characters,
+                (int)Math.Ceiling(characters / CharactersPerToken), count > 0);
+        }).ToList();
     }
 
     /// <summary>

@@ -24,8 +24,10 @@ public sealed class CharacterKnowledgeService
     private readonly KnowledgeBuilder _builder;
     private readonly string _extensionId;
 
-    private readonly ConcurrentDictionary<string, CharacterKnowledgeFile> _cache = new(StringComparer.OrdinalIgnoreCase);
-    private readonly ConcurrentDictionary<string, SemaphoreSlim> _fileLocks = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly StringComparer PathComparer = OperatingSystem.IsWindows()
+        ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+    private readonly ConcurrentDictionary<string, CharacterKnowledgeFile> _cache = new(PathComparer);
+    private readonly ConcurrentDictionary<string, SemaphoreSlim> _fileLocks = new(PathComparer);
 
     public CharacterKnowledgeService(IHostServices host, KnowledgeBuilder builder, string extensionId)
     {
@@ -36,48 +38,25 @@ public sealed class CharacterKnowledgeService
 
     private string KnowledgeRoot => _host.FileService.CombinePath(_host.GetExtensionDataPath(_extensionId), "knowledge");
 
-    private string FilePathFor(string characterId)
-        => _host.FileService.CombinePath(KnowledgeRoot, $"{characterId}.json");
+    private string FilePathFor(string root, string characterId)
+        => _host.FileService.CombinePath(root, $"{characterId}.json");
 
-    private SemaphoreSlim LockFor(string characterId)
-        => _fileLocks.GetOrAdd(characterId, _ => new SemaphoreSlim(1, 1));
+    private SemaphoreSlim LockFor(string path)
+        => _fileLocks.GetOrAdd(path, _ => new SemaphoreSlim(1, 1));
 
     /// <summary>
     /// Load (or create) the per-character knowledge file. Cached after first read.
     /// </summary>
-    public async Task<CharacterKnowledgeFile> LoadAsync(string characterId)
-    {
-        if (_cache.TryGetValue(characterId, out var cached))
-            return cached;
+    public Task<CharacterKnowledgeFile> LoadAsync(string characterId, CancellationToken cancellationToken = default)
+        => LoadAsync(FilePathFor(KnowledgeRoot, characterId), characterId, cancellationToken);
 
-        var sem = LockFor(characterId);
-        await sem.WaitAsync().ConfigureAwait(false);
+    private async Task<CharacterKnowledgeFile> LoadAsync(string path, string characterId, CancellationToken cancellationToken)
+    {
+        var sem = LockFor(path);
+        await sem.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            if (_cache.TryGetValue(characterId, out cached))
-                return cached;
-
-            var path = FilePathFor(characterId);
-            CharacterKnowledgeFile file;
-            if (await _host.FileService.ExistsAsync(path).ConfigureAwait(false))
-            {
-                try
-                {
-                    var json = await _host.FileService.ReadTextAsync(path).ConfigureAwait(false);
-                    file = JsonSerializer.Deserialize<CharacterKnowledgeFile>(json) ?? new CharacterKnowledgeFile { CharacterId = characterId };
-                }
-                catch
-                {
-                    file = new CharacterKnowledgeFile { CharacterId = characterId };
-                }
-            }
-            else
-            {
-                file = new CharacterKnowledgeFile { CharacterId = characterId };
-            }
-
-            _cache[characterId] = file;
-            return file;
+            return await LoadUnlockedAsync(path, characterId, cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -85,21 +64,35 @@ public sealed class CharacterKnowledgeService
         }
     }
 
-    private async Task SaveAsync(CharacterKnowledgeFile file)
+    private async Task<CharacterKnowledgeFile> LoadUnlockedAsync(string path, string characterId, CancellationToken cancellationToken)
     {
-        var sem = LockFor(file.CharacterId);
-        await sem.WaitAsync().ConfigureAwait(false);
-        try
+        cancellationToken.ThrowIfCancellationRequested();
+        if (_cache.TryGetValue(path, out var cached)) return cached;
+        CharacterKnowledgeFile file;
+        if (await _host.FileService.ExistsAsync(path).ConfigureAwait(false))
         {
-            await _host.FileService.CreateDirectoryAsync(KnowledgeRoot).ConfigureAwait(false);
-            var path = FilePathFor(file.CharacterId);
-            var json = JsonSerializer.Serialize(file, JsonOptions);
-            await _host.FileService.WriteTextAsync(path, json).ConfigureAwait(false);
+            var json = await _host.FileService.ReadTextAsync(path).ConfigureAwait(false);
+            file = JsonSerializer.Deserialize<CharacterKnowledgeFile>(json)
+                ?? throw new InvalidDataException("The character knowledge file is empty.");
         }
-        finally
+        else
         {
-            sem.Release();
+            file = new CharacterKnowledgeFile { CharacterId = characterId };
         }
+        cancellationToken.ThrowIfCancellationRequested();
+        _cache[path] = file;
+        return file;
+    }
+
+    private async Task SaveUnlockedAsync(string path, CharacterKnowledgeFile file, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var directory = Path.GetDirectoryName(path)
+            ?? throw new InvalidDataException("The knowledge file has no parent directory.");
+        await _host.FileService.CreateDirectoryAsync(directory).ConfigureAwait(false);
+        var json = JsonSerializer.Serialize(file, JsonOptions);
+        cancellationToken.ThrowIfCancellationRequested();
+        await _host.FileService.WriteTextAsync(path, json).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -108,15 +101,23 @@ public sealed class CharacterKnowledgeService
     /// </summary>
     public async Task InvalidateSceneAsync(string sceneId, IEnumerable<string> characterIds)
     {
+        var root = KnowledgeRoot;
         foreach (var charId in characterIds)
         {
-            var file = await LoadAsync(charId).ConfigureAwait(false);
-            var idx = file.Scenes.FindIndex(s => string.Equals(s.SceneId, sceneId, StringComparison.OrdinalIgnoreCase));
-            if (idx >= 0)
+            var path = FilePathFor(root, charId);
+            var sem = LockFor(path);
+            await sem.WaitAsync().ConfigureAwait(false);
+            try
             {
+                var file = await LoadUnlockedAsync(path, charId, CancellationToken.None).ConfigureAwait(false);
+                var idx = file.Scenes.FindIndex(s => string.Equals(s.SceneId, sceneId, StringComparison.OrdinalIgnoreCase));
+                if (idx < 0) continue;
+                file = Copy(file);
                 file.Scenes.RemoveAt(idx);
-                await SaveAsync(file).ConfigureAwait(false);
+                await SaveUnlockedAsync(path, file, CancellationToken.None).ConfigureAwait(false);
+                _cache[path] = file;
             }
+            finally { sem.Release(); }
         }
     }
 
@@ -133,11 +134,13 @@ public sealed class CharacterKnowledgeService
         Func<Task<string>> readSceneText,
         CancellationToken cancellationToken = default)
     {
-        var file = await LoadAsync(character.Id).ConfigureAwait(false);
+        var root = KnowledgeRoot;
+        var path = FilePathFor(root, character.Id);
         var sceneText = await readSceneText().ConfigureAwait(false);
+        EnsureProject(root);
         var hash = HashContent(sceneText);
 
-        var existing = file.Scenes.FirstOrDefault(s => string.Equals(s.SceneId, scene.Id, StringComparison.OrdinalIgnoreCase));
+        var existing = await ReadEntryAsync(path, character.Id, scene.Id, cancellationToken).ConfigureAwait(false);
         if (existing != null
             && string.Equals(existing.SceneContentHash, hash, StringComparison.Ordinal)
             && existing.SchemaVersion >= CharacterSceneKnowledge.CurrentSchemaVersion)
@@ -152,7 +155,8 @@ public sealed class CharacterKnowledgeService
             && !await _host.IsSceneAnalysisStaleAsync(scene.Id, sceneText).ConfigureAwait(false))
         {
             var projected = ProjectFromRecord(record, character, hash);
-            await UpsertAsync(file, projected).ConfigureAwait(false);
+            EnsureProject(root);
+            await UpsertAsync(path, character.Id, projected, cancellationToken).ConfigureAwait(false);
             return projected;
         }
 
@@ -167,7 +171,8 @@ public sealed class CharacterKnowledgeService
         built.SceneContentHash = hash;
         built.GeneratedAt = DateTime.UtcNow;
 
-        await UpsertAsync(file, built).ConfigureAwait(false);
+        EnsureProject(root);
+        await UpsertAsync(path, character.Id, built, cancellationToken).ConfigureAwait(false);
         return built;
     }
 
@@ -258,28 +263,52 @@ public sealed class CharacterKnowledgeService
         string sceneText,
         CancellationToken cancellationToken = default)
     {
+        var root = KnowledgeRoot;
         var hash = HashContent(sceneText);
         foreach (var character in characters)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var entry = ProjectFromRecord(record, character, hash);
-            var fileLock = LockFor(character.Id);
-            await fileLock.WaitAsync(cancellationToken).ConfigureAwait(false);
-            try
-            {
-                var file = await LoadAsync(character.Id).ConfigureAwait(false);
-                await UpsertAsync(file, entry).ConfigureAwait(false);
-            }
-            finally { fileLock.Release(); }
+            EnsureProject(root);
+            await UpsertAsync(FilePathFor(root, character.Id), character.Id, entry, cancellationToken).ConfigureAwait(false);
         }
     }
 
-    private async Task UpsertAsync(CharacterKnowledgeFile file, CharacterSceneKnowledge entry)
+    private void EnsureProject(string root)
     {
-        var idx = file.Scenes.FindIndex(s => string.Equals(s.SceneId, entry.SceneId, StringComparison.OrdinalIgnoreCase));
-        if (idx >= 0) file.Scenes[idx] = entry;
-        else file.Scenes.Add(entry);
-        await SaveAsync(file).ConfigureAwait(false);
+        if (!PathComparer.Equals(root, KnowledgeRoot))
+            throw new OperationCanceledException("The project changed during character analysis.");
+    }
+
+    private async Task UpsertAsync(string path, string characterId, CharacterSceneKnowledge entry, CancellationToken cancellationToken)
+    {
+        var sem = LockFor(path);
+        await sem.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var file = Copy(await LoadUnlockedAsync(path, characterId, cancellationToken).ConfigureAwait(false));
+            var idx = file.Scenes.FindIndex(s => string.Equals(s.SceneId, entry.SceneId, StringComparison.OrdinalIgnoreCase));
+            if (idx >= 0) file.Scenes[idx] = entry;
+            else file.Scenes.Add(entry);
+            await SaveUnlockedAsync(path, file, cancellationToken).ConfigureAwait(false);
+            _cache[path] = file;
+        }
+        finally { sem.Release(); }
+    }
+
+    private static CharacterKnowledgeFile Copy(CharacterKnowledgeFile file)
+        => new() { CharacterId = file.CharacterId, Scenes = [.. file.Scenes] };
+
+    private async Task<CharacterSceneKnowledge?> ReadEntryAsync(string path, string characterId, string sceneId, CancellationToken cancellationToken)
+    {
+        var sem = LockFor(path);
+        await sem.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var file = await LoadUnlockedAsync(path, characterId, cancellationToken).ConfigureAwait(false);
+            return file.Scenes.FirstOrDefault(s => string.Equals(s.SceneId, sceneId, StringComparison.OrdinalIgnoreCase));
+        }
+        finally { sem.Release(); }
     }
 
     /// <summary>
@@ -405,6 +434,7 @@ public sealed class CharacterKnowledgeService
         CancellationToken cancellationToken,
         int maxParallelism = 1)
     {
+        var root = KnowledgeRoot;
         // Pre-read scene texts once to avoid N round-trips per character.
         var sceneTexts = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var (chapter, scene) in orderedScenes)
@@ -430,8 +460,6 @@ public sealed class CharacterKnowledgeService
 
         var parallelism = Math.Max(1, maxParallelism);
         var gate = new SemaphoreSlim(parallelism, parallelism);
-        var fileLockMap = new ConcurrentDictionary<string, SemaphoreSlim>();
-        SemaphoreSlim FileLock(string charId) => fileLockMap.GetOrAdd(charId, _ => new SemaphoreSlim(1, 1));
 
         // Tracks scenes currently being processed (one entry per parallel slot
         // that holds the gate). All mutations happen under sessionStart lock.
@@ -468,7 +496,7 @@ public sealed class CharacterKnowledgeService
         {
             var character = selectedCharacters[ci];
             var charIndex = ci + 1;
-            var file = await LoadAsync(character.Id).ConfigureAwait(false);
+            var path = FilePathFor(root, character.Id);
 
             var sceneTasks = new List<Task>(orderedScenes.Count);
             for (int si = 0; si < orderedScenes.Count; si++)
@@ -493,14 +521,8 @@ public sealed class CharacterKnowledgeService
                         var sceneText = sceneTexts.TryGetValue(scene.Id, out var t) ? t : string.Empty;
                         var hash = HashContent(sceneText);
 
-                        CharacterSceneKnowledge? existing;
-                        var fileLock = FileLock(character.Id);
-                        await fileLock.WaitAsync(cancellationToken).ConfigureAwait(false);
-                        try
-                        {
-                            existing = file.Scenes.FirstOrDefault(s => string.Equals(s.SceneId, scene.Id, StringComparison.OrdinalIgnoreCase));
-                        }
-                        finally { fileLock.Release(); }
+                        EnsureProject(root);
+                        var existing = await ReadEntryAsync(path, character.Id, scene.Id, cancellationToken).ConfigureAwait(false);
 
                         if (existing != null
                             && string.Equals(existing.SceneContentHash, hash, StringComparison.Ordinal)
@@ -531,12 +553,8 @@ public sealed class CharacterKnowledgeService
                         built.SceneContentHash = hash;
                         built.GeneratedAt = DateTime.UtcNow;
 
-                        await fileLock.WaitAsync(cancellationToken).ConfigureAwait(false);
-                        try
-                        {
-                            await UpsertAsync(file, built).ConfigureAwait(false);
-                        }
-                        finally { fileLock.Release(); }
+                        EnsureProject(root);
+                        await UpsertAsync(path, character.Id, built, cancellationToken).ConfigureAwait(false);
 
                         lock (sessionStart)
                         {
@@ -626,7 +644,6 @@ public sealed class CharacterKnowledgeService
     /// </summary>
     public async Task ClearCacheAsync()
     {
-        _cache.Clear();
         var dir = KnowledgeRoot;
         if (!await _host.FileService.DirectoryExistsAsync(dir).ConfigureAwait(false))
             return;
@@ -634,18 +651,18 @@ public sealed class CharacterKnowledgeService
         var files = await _host.FileService.GetFilesAsync(dir, "*.json").ConfigureAwait(false);
         foreach (var f in files)
         {
+            var sem = LockFor(f);
+            await sem.WaitAsync().ConfigureAwait(false);
             try
             {
-                // IExtensionFileService has no delete; overwrite with empty file then leave it.
-                // Better: we DO have a host file service that can write — but no delete API.
-                // The safest portable behaviour is to overwrite with an empty knowledge file.
-                var empty = JsonSerializer.Serialize(new CharacterKnowledgeFile
+                var empty = new CharacterKnowledgeFile
                 {
                     CharacterId = _host.FileService.GetFileNameWithoutExtension(f)
-                }, JsonOptions);
-                await _host.FileService.WriteTextAsync(f, empty).ConfigureAwait(false);
+                };
+                await SaveUnlockedAsync(f, empty, CancellationToken.None).ConfigureAwait(false);
+                _cache[f] = empty;
             }
-            catch { }
+            finally { sem.Release(); }
         }
     }
 

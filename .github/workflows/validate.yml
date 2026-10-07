@@ -1,0 +1,41 @@
+name: Validate extension
+
+on:
+  pull_request:
+  push:
+    branches: [main, dev]
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: novalist-aiassistant
+      - uses: actions/checkout@v4
+        with:
+          repository: Drommedhar/novalist-official
+          ref: ba8b6d328b64ded6e923baa25ce086d7e9e799e4
+          path: novalist-official
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Check SDK compatibility contract
+        working-directory: novalist-aiassistant
+        run: python3 tools/check-sdk-compatibility.py
+      - name: Run extension tests
+        working-directory: novalist-aiassistant
+        run: dotnet test tests/Novalist.Extensions.AiAssistant.Tests.csproj -c Release -p:SkipExtensionDeploy=true -m:1 -nr:false
+      - name: Check Python workers
+        working-directory: novalist-aiassistant
+        run: python3 -m unittest discover -s tests -p test_dictation_worker.py
+      - name: Check chat webview lifecycle
+        working-directory: novalist-aiassistant
+        run: node --test tests/chat-web.test.cjs

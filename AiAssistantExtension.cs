@@ -10,6 +10,10 @@ namespace Novalist.Extensions.AiAssistant;
 
 public sealed class AiAssistantExtension : IExtension, IStatusBarContributor, IRibbonContributor, ISettingsSchemaContributor, IGrammarCheckContributor, IArticleGeneratorContributor, IEntityExtractionContributor, IContextMenuContributor, IWizardContributor, IDictationContributor, IDictationWarmupContributor, IDictationOptionsContributor, Novalist.Sdk.Hooks.IWebViewContributor
 {
+    public AiAssistantExtension() : this(new Services.AiService()) { }
+
+    internal AiAssistantExtension(Services.AiService service) => AiService = service;
+
     public string Id => "com.novalist.ai";
     public string DisplayName => "AI Assistant";
     public string Description => "AI-powered chat, story analysis, and scene statistics.";
@@ -37,7 +41,7 @@ public sealed class AiAssistantExtension : IExtension, IStatusBarContributor, IR
     private IHostServices _host = null!;
     internal IHostServices Host => _host;
     private IExtensionLocalization _loc = null!;
-    internal Services.AiService AiService { get; } = new();
+    internal Services.AiService AiService { get; }
     internal AiSettings Settings { get; private set; } = new();
     private readonly LocalDictationRuntime _dictationRuntime = new();
     private DictationService? _dictation;
@@ -173,7 +177,6 @@ public sealed class AiAssistantExtension : IExtension, IStatusBarContributor, IR
         // The prompt list is read through a callback rather than passed by
         // value, so editing a prompt shows up in the menu without a restart.
         _inlineRewriteService = new InlineRewriteService(AiService, host, _loc, () => Prompts);
-        System.Diagnostics.Debug.WriteLine($"[InlineActions] AiAssistant registering inline contributor. Actions: {string.Join(",", _inlineRewriteService.GetInlineActions().Select(a => a.Id))}");
         host.RegisterInlineActionContributor(_inlineRewriteService);
 
         _critiqueService = new CritiqueService(AiService, host, _loc);
@@ -195,7 +198,6 @@ public sealed class AiAssistantExtension : IExtension, IStatusBarContributor, IR
         host.LanguageChanged += OnLanguageChanged;
         host.SceneOpened += scene =>
         {
-            System.Diagnostics.Debug.WriteLine($"[AiAssistant] host.SceneOpened id={scene.Id} title={scene.Title}");
             _lastOpenedScene = scene;
         };
         host.SceneSaved += scene => { _ = OnSceneSavedAsync(scene); };
@@ -263,6 +265,7 @@ public sealed class AiAssistantExtension : IExtension, IStatusBarContributor, IR
         }
         catch (Exception ex)
         {
+            // aislop-ignore-next-line ai-slop/csharp-console-leftover -- Content-free background failure diagnostics.
             System.Diagnostics.Debug.WriteLine($"[AiAssistant] legacy knowledge prompt failed: {ex.GetType().Name}");
         }
     }
@@ -294,7 +297,11 @@ public sealed class AiAssistantExtension : IExtension, IStatusBarContributor, IR
             if (Settings.BackgroundSceneAnalysis)
                 await AnalyseSceneInBackgroundAsync(scene);
         }
-        catch { }
+        catch (Exception exception)
+        {
+            // aislop-ignore-next-line ai-slop/csharp-console-leftover -- Background refresh failure type only; never log manuscript or paths.
+            System.Diagnostics.Debug.WriteLine($"[AiAssistant] Knowledge invalidation failed: {exception.GetType().Name}");
+        }
     }
 
     /// <summary>
@@ -355,6 +362,7 @@ public sealed class AiAssistantExtension : IExtension, IStatusBarContributor, IR
         }
         catch (Exception ex)
         {
+            // aislop-ignore-next-line ai-slop/csharp-console-leftover -- Content-free background failure diagnostics.
             System.Diagnostics.Debug.WriteLine(
                 $"[AiAssistant] background scene analysis failed: {ex.GetType().Name}");
         }
@@ -1424,14 +1432,9 @@ public sealed class AiAssistantExtension : IExtension, IStatusBarContributor, IR
 
     internal void SavePrompts(IReadOnlyList<SavedPrompt> prompts)
     {
-        Prompts = PromptLibrary.Clean(prompts);
-        try
-        {
-            File.WriteAllText(PromptsPath, PromptLibrary.Serialise(Prompts));
-        }
-        catch (IOException)
-        {
-        }
+        var cleaned = PromptLibrary.Clean(prompts);
+        File.WriteAllText(PromptsPath, PromptLibrary.Serialise(cleaned));
+        Prompts = cleaned;
     }
 
     /// <summary>A string argument, or null when it was not given.</summary>

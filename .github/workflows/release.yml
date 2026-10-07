@@ -11,7 +11,11 @@ env:
   CONFIGURATION: Release
 
 jobs:
+  validate:
+    uses: ./.github/workflows/validate.yml
+
   build:
+    needs: validate
     name: Build & Release
     runs-on: ubuntu-latest
     permissions:
@@ -35,6 +39,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: Drommedhar/novalist-official
+          ref: ba8b6d328b64ded6e923baa25ce086d7e9e799e4
           path: novalist-official
 
       - name: Setup .NET
@@ -59,6 +64,7 @@ jobs:
         run: >-
           dotnet build
           -c ${{ env.CONFIGURATION }}
+          -p:SkipExtensionDeploy=true
           --no-restore
 
       - name: Create extension ZIP

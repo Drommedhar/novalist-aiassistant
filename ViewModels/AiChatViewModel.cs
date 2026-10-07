@@ -4,6 +4,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Novalist.Sdk.Models;
 using Novalist.Sdk.Services;
+using Novalist.Extensions.AiAssistant.Services;
 
 namespace Novalist.Extensions.AiAssistant.ViewModels;
 
@@ -34,15 +35,24 @@ public partial class AiChatViewModel : ObservableObject, IDisposable
     private bool _isThinkingExpanded;
 
     public ObservableCollection<AiChatMessageItem> Messages { get; } = [];
+    internal IReadOnlyList<ContextBlock> SelectedContext { get; set; } = [];
+
+    internal ChatRequestPlan Preview(string text, IReadOnlyList<ContextBlock> context)
+        => ChatRequestAssembler.Build(BuildSystemPrompt(), _conversationHistory, text, context,
+            _extension.Settings.ContextLength > 0
+                ? Math.Min(_extension.ContextEngine.TokenBudget, _extension.Settings.ContextLength)
+                : _extension.ContextEngine.TokenBudget);
 
     private readonly List<AiChatMessage> _conversationHistory = [];
     private CancellationTokenSource? _cts;
+    private long _conversationEpoch;
 
     public AiChatViewModel(IHostServices host, AiAssistantExtension extension)
     {
         _host = host;
         _extension = extension;
         _loc = host.GetLocalization(extension.Id);
+        _host.ProjectLoaded += OnProjectLoaded;
     }
 
     private bool _disposed;
@@ -50,84 +60,116 @@ public partial class AiChatViewModel : ObservableObject, IDisposable
     {
         if (_disposed) return;
         _disposed = true;
+        _host.ProjectLoaded -= OnProjectLoaded;
+        _conversationEpoch++;
         _cts?.Cancel();
-        _cts?.Dispose();
         _cts = null;
     }
 
     [RelayCommand(CanExecute = nameof(CanSend))]
-    private async Task SendAsync()
+    private Task SendAsync() => SendPreparedAsync(UserInput.Trim());
+
+    internal async Task SendPreparedAsync(string text, ChatRequestPlan? request = null)
     {
-        var text = UserInput.Trim();
-        if (string.IsNullOrEmpty(text)) return;
-
-        UserInput = string.Empty;
-        Messages.Add(new AiChatMessageItem("user", text));
-
-        // Build system prompt with entity context on first message
-        if (_conversationHistory.Count == 0)
-        {
-            var systemPrompt = await BuildSystemPromptAsync();
-            if (!string.IsNullOrEmpty(systemPrompt))
-                _conversationHistory.Add(new AiChatMessage { Role = "system", Content = systemPrompt });
-        }
-
-        _conversationHistory.Add(new AiChatMessage { Role = "user", Content = text });
-
+        if (_disposed || IsGenerating || string.IsNullOrEmpty(text)) return;
+        var epoch = _conversationEpoch;
+        using var cancellation = new CancellationTokenSource();
+        _cts = cancellation;
         IsGenerating = true;
+
+        ResetStreaming();
+        var response = new StringBuilder();
+        var thinking = new StringBuilder();
+        var receivedResponse = false;
+        bool IsCurrent() => epoch == _conversationEpoch && !_disposed && ReferenceEquals(_cts, cancellation);
+
+        try
+        {
+            request ??= Preview(text, SelectedContext);
+            if (!IsCurrent()) return;
+            UserInput = string.Empty;
+            if (!IsCurrent()) return;
+            Messages.Add(new AiChatMessageItem("user", text));
+            if (!IsCurrent()) return;
+            _conversationHistory.Add(new AiChatMessage { Role = "user", Content = text });
+            var aiHooks = _host.GetAiHooks();
+            if (!IsCurrent()) return;
+            var result = await _extension.AiService.GenerateChatWithOutputLimitAsync(
+                request.Messages, request.OutputTokenReserve,
+                chunk =>
+                {
+                    if (!IsCurrent()) return;
+                    chunk = FilterResponse(chunk, aiHooks);
+                    receivedResponse = true;
+                    response.Append(chunk);
+                    _host.PostToUI(() =>
+                    {
+                        if (IsCurrent()) StreamingResponse += chunk;
+                    });
+                },
+                null,
+                chunk =>
+                {
+                    if (!IsCurrent()) return;
+                    thinking.Append(chunk);
+                    _host.PostToUI(() =>
+                    {
+                        if (!IsCurrent()) return;
+                        StreamingThinking += chunk;
+                        HasThinking = true;
+                    });
+                },
+                cancellation.Token);
+
+            if (!IsCurrent()) return;
+
+            var answer = receivedResponse ? response.ToString() : FilterResponse(result.Response, aiHooks);
+            if (!IsCurrent()) return;
+            _conversationHistory.Add(new AiChatMessage { Role = "assistant", Content = answer });
+
+            Messages.Add(new AiChatMessageItem("assistant", answer, result.Thinking));
+        }
+        catch (OperationCanceledException)
+        {
+            if (!IsCurrent()) return;
+            if (response.Length > 0)
+            {
+                Messages.Add(new AiChatMessageItem("assistant", response + " [cancelled]", thinking.ToString()));
+                _conversationHistory.Add(new AiChatMessage { Role = "assistant", Content = response.ToString() });
+            }
+        }
+        catch (Exception ex)
+        {
+            if (IsCurrent())
+                Messages.Add(new AiChatMessageItem("error", ex.Message));
+        }
+        finally
+        {
+            if (IsCurrent())
+            {
+                _cts = null;
+                ResetStreaming();
+                IsGenerating = false;
+            }
+        }
+    }
+
+    private static string FilterResponse(string chunk, IReadOnlyList<Novalist.Sdk.Hooks.IAiHook> hooks)
+    {
+        foreach (var hook in hooks)
+        {
+            try { chunk = hook.OnResponseChunk(chunk); }
+            catch { /* A failed hook must not discard the provider response. */ }
+        }
+        return chunk;
+    }
+
+    private void ResetStreaming()
+    {
         StreamingResponse = string.Empty;
         StreamingThinking = string.Empty;
         HasThinking = false;
         IsThinkingExpanded = false;
-        _cts = new CancellationTokenSource();
-
-        try
-        {
-            var aiHooks = _host.GetAiHooks();
-            var result = await _extension.AiService.GenerateChatAsync(
-                _conversationHistory,
-                chunk =>
-                {
-                    foreach (var hook in aiHooks)
-                    {
-                        try { chunk = hook.OnResponseChunk(chunk); } catch { /* swallow */ }
-                    }
-                    _host.PostToUI(() => StreamingResponse += chunk);
-                },
-                null,
-                chunk => _host.PostToUI(() =>
-                {
-                    StreamingThinking += chunk;
-                    HasThinking = true;
-                }),
-                _cts.Token);
-
-            _conversationHistory.Add(new AiChatMessage { Role = "assistant", Content = result.Response });
-
-            Messages.Add(new AiChatMessageItem("assistant", result.Response, result.Thinking));
-            StreamingResponse = string.Empty;
-            StreamingThinking = string.Empty;
-            HasThinking = false;
-        }
-        catch (OperationCanceledException)
-        {
-            if (!string.IsNullOrEmpty(StreamingResponse))
-            {
-                Messages.Add(new AiChatMessageItem("assistant", StreamingResponse + " [cancelled]", StreamingThinking));
-                _conversationHistory.Add(new AiChatMessage { Role = "assistant", Content = StreamingResponse });
-            }
-            StreamingResponse = string.Empty;
-            StreamingThinking = string.Empty;
-        }
-        catch (Exception ex)
-        {
-            Messages.Add(new AiChatMessageItem("error", ex.Message));
-        }
-        finally
-        {
-            IsGenerating = false;
-            _cts = null;
-        }
     }
 
     private bool CanSend() => !IsGenerating && !string.IsNullOrWhiteSpace(UserInput);
@@ -139,21 +181,31 @@ public partial class AiChatViewModel : ObservableObject, IDisposable
     private void Cancel()
     {
         _cts?.Cancel();
-        _extension.AiService.Cancel();
     }
 
     [RelayCommand]
     private async Task ClearChatAsync()
     {
-        Messages.Clear();
-        _conversationHistory.Clear();
-        StreamingResponse = string.Empty;
-        StreamingThinking = string.Empty;
-        HasThinking = false;
+        ResetConversation();
         await _extension.AiService.ResetChatSessionAsync();
     }
 
-    private async Task<string> BuildSystemPromptAsync()
+    private void OnProjectLoaded(ProjectInfo project) => _host.PostToUI(ResetConversation);
+
+    private void ResetConversation()
+    {
+        _conversationEpoch++;
+        _cts?.Cancel();
+        _cts = null;
+        Messages.Clear();
+        _conversationHistory.Clear();
+        ResetStreaming();
+        IsGenerating = false;
+        UserInput = string.Empty;
+        SelectedContext = [];
+    }
+
+    private string BuildSystemPrompt()
     {
         var settings = _extension.Settings;
         var template = !string.IsNullOrWhiteSpace(settings.SystemPrompt)
@@ -161,43 +213,14 @@ public partial class AiChatViewModel : ObservableObject, IDisposable
             : AiSettings.DefaultSystemPrompt;
 
         var langName = _host.CurrentLanguageDisplayName;
-        var prompt = template.Replace("{{LANGUAGE}}", langName);
-
-        // Collect entity summaries
-        var entities = await CollectEntitySummariesAsync();
-        if (entities.Count > 0)
-        {
-            var entityBlock = new StringBuilder("\n\nKnown project entities:\n");
-            foreach (var e in entities)
-                entityBlock.AppendLine($"- [{e.Type}] {e.Name}: {e.Details}");
-            prompt += entityBlock.ToString();
-        }
+        var prompt = new StringBuilder(template.Replace("{{LANGUAGE}}", langName));
 
         // Extension AI hooks
         var aiHooks = _host.GetAiHooks();
         if (aiHooks.Count > 0)
         {
-            var characters = entities.Where(e => e.Type == "character").Select(e => e.Name).ToList();
-            var locations = entities.Where(e => e.Type == "location").Select(e => e.Name).ToList();
-            var items = entities.Where(e => e.Type == "item").Select(e => e.Name).ToList();
-            var loreNames = entities.Where(e => e.Type == "lore").Select(e => e.Name).ToList();
-
-            // Group custom entity names by type display name
-            var customEntityNames = new Dictionary<string, IReadOnlyList<string>>();
-            foreach (var group in entities.Where(e => e.Type.StartsWith("custom:", StringComparison.Ordinal))
-                         .GroupBy(e => e.Type))
-            {
-                var displayName = group.Key.Length > 7 ? group.Key[7..] : group.Key;
-                customEntityNames[displayName] = group.Select(e => e.Name).ToList();
-            }
-
             var aiContext = new AiPromptContext
             {
-                CharacterNames = characters,
-                LocationNames = locations,
-                ItemNames = items,
-                LoreNames = loreNames,
-                CustomEntityNames = customEntityNames,
                 Language = _host.CurrentLanguage
             };
 
@@ -207,13 +230,13 @@ public partial class AiChatViewModel : ObservableObject, IDisposable
                 {
                     var addition = hook.OnBuildSystemPrompt(aiContext);
                     if (!string.IsNullOrWhiteSpace(addition))
-                        prompt += "\n\n" + addition;
+                        prompt.Append("\n\n").Append(addition);
                 }
                 catch { /* swallow — never let an extension break AI */ }
             }
         }
 
-        return prompt;
+        return prompt.ToString();
     }
 
     internal async Task<List<EntitySummary>> CollectEntitySummariesAsync()

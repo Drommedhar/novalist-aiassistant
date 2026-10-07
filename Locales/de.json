@@ -73,6 +73,7 @@
     "topP": "Top P",
     "previewTitle": "Vorschau",
     "previewHint": "Genau das, was gesendet würde, in dieser Reihenfolge. Noch wurde nichts verbraucht.",
+    "previewReservedOutput": "Für die Antwort reservierte Tokens:",
     "previewBlock": "Block",
     "previewTier": "Art",
     "previewTokens": "Tokens",

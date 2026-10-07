@@ -163,16 +163,75 @@ function addMessage(role, text, thinking) {
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
 
+let responseText = '';
+let thinkingText = '';
+let streamFrame = 0;
+let isGenerating = false;
+let sendPending = false;
+
+function updateComposer() {
+  sendBtn.disabled = sendPending || isGenerating;
+  cancelBtn.hidden = !sendPending && !isGenerating;
+}
+
+function clearStream() {
+  if (streamFrame) cancelAnimationFrame(streamFrame);
+  streamFrame = 0;
+  if (streamEl) streamEl.remove();
+  streamEl = null;
+  responseText = '';
+  thinkingText = '';
+}
+
+function renderStream() {
+  if (!isGenerating) {
+    if (streamEl) { streamEl.remove(); streamEl = null; }
+    return;
+  }
+  if (!responseText && !thinkingText) return;
+  if (!streamEl) {
+    streamEl = document.createElement('div');
+    streamEl.className = 'msg assistant';
+    messagesEl.appendChild(streamEl);
+  }
+  if (!streamFrame) streamFrame = requestAnimationFrame(() => {
+    streamFrame = 0;
+    if (!streamEl) return;
+    streamEl.textContent = (thinkingText ? '[' + thinkingText + ']\n' : '') + responseText;
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  });
+}
+
 window.addEventListener('message', (event) => {
   const raw = event.data && event.data.novalistHost;
   if (typeof raw !== 'string') return;
   const msg = JSON.parse(raw);
   applyStrings(msg.strings);
   if (msg.type === 'history') {
+    clearStream();
+    sendPending = false;
+    isGenerating = !!msg.isGenerating;
+    responseText = msg.streamingResponse || '';
+    thinkingText = msg.streamingThinking || '';
+    if (msg.reset) {
+      inputEl.value = '';
+      previewPanel.hidden = true;
+      previewPanel.textContent = '';
+      contextEl.textContent = '';
+      updateCount();
+    }
     messagesEl.textContent = '';
     for (const m of msg.messages) addMessage(m.role, m.text, m.thinking);
+    updateComposer();
+    renderStream();
+    if (!contextEl.hidden) post({ type: 'contextOptions' });
   } else if (msg.type === 'message') {
     if (streamEl) { streamEl.remove(); streamEl = null; }
+    if (msg.role === 'user') {
+      sendPending = false;
+      if (inputEl.value.trim() === msg.text) inputEl.value = '';
+      updateComposer();
+    }
     addMessage(msg.role, msg.text, msg.thinking);
   } else if (msg.type === 'contextOptions') {
     drawContext(msg.groups);
@@ -182,19 +241,24 @@ window.addEventListener('message', (event) => {
     drawModels(msg);
   } else if (msg.type === 'notice') {
     addMessage('notice', msg.text);
+  } else if (msg.type === 'sendRejected') {
+    sendPending = false;
+    if (!inputEl.value) inputEl.value = msg.text;
+    if (msg.error) addMessage('error', msg.error);
+    updateComposer();
+  } else if (msg.type === 'sendAccepted') {
+    sendPending = false;
+    updateComposer();
+  } else if (msg.type === 'previewRejected') {
+    addMessage('error', msg.error);
   } else if (msg.type === 'state') {
-    sendBtn.disabled = msg.isGenerating;
-    cancelBtn.hidden = !msg.isGenerating;
-    if (msg.isGenerating && (msg.streaming || msg.thinking)) {
-      if (!streamEl) {
-        streamEl = document.createElement('div');
-        streamEl.className = 'msg assistant';
-        messagesEl.appendChild(streamEl);
-      }
-      streamEl.textContent = (msg.thinking ? '[' + msg.thinking + ']\n' : '') + msg.streaming;
-      messagesEl.scrollTop = messagesEl.scrollHeight;
-    }
-    if (!msg.isGenerating && streamEl) { streamEl.remove(); streamEl = null; }
+    if (msg.reset) { responseText = ''; thinkingText = ''; }
+    responseText += msg.streamingDelta || '';
+    thinkingText += msg.thinkingDelta || '';
+    isGenerating = !!msg.isGenerating;
+    if (isGenerating) sendPending = false;
+    updateComposer();
+    renderStream();
   }
 });
 
@@ -253,6 +317,8 @@ function drawPreview(p) {
     '<p>' + esc(t('previewTotal')) + ' ' +
     (p.estimatedTokens || 0).toLocaleString() + ' / ' +
     (p.tokenBudget || 0).toLocaleString() + '</p>' +
+    '<p>' + esc(t('previewReservedOutput')) + ' ' + (p.outputTokenReserve || 0).toLocaleString() + '</p>' +
+    (p.dropped && p.dropped.length ? '<p>' + esc(p.dropped.join(', ')) + '</p>' : '') +
     '<pre>' + esc(p.text) + '</pre>';
   previewPanel.hidden = false;
 }
@@ -269,7 +335,7 @@ previewBtn.onclick = () => {
     previewPanel.hidden = true;
     return;
   }
-  post({ type: 'preview', include: ticked() });
+  post({ type: 'preview', text: inputEl.value.trim(), include: ticked() });
 };
 
 function updateCount() {
@@ -307,8 +373,9 @@ function drawContext(groups) {
 
 function send() {
   const text = inputEl.value.trim();
-  if (!text) return;
-  inputEl.value = '';
+  if (sendBtn.disabled || !text) return;
+  sendPending = true;
+  updateComposer();
   // What the writer ticked travels with the message. Nothing is inferred: what
   // was sent is exactly what is shown as ticked.
   post({ type: 'send', text, include: ticked() });
@@ -322,8 +389,19 @@ contextToggle.addEventListener('click', () => {
 });
 
 sendBtn.addEventListener('click', send);
-cancelBtn.addEventListener('click', () => post({ type: 'cancel' }));
-resetBtn.addEventListener('click', () => { messagesEl.textContent = ''; post({ type: 'reset' }); });
+cancelBtn.addEventListener('click', () => {
+  sendPending = false;
+  updateComposer();
+  post({ type: 'cancel' });
+});
+resetBtn.addEventListener('click', () => {
+  sendPending = false;
+  isGenerating = false;
+  clearStream();
+  updateComposer();
+  messagesEl.textContent = '';
+  post({ type: 'reset' });
+});
 inputEl.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
 });

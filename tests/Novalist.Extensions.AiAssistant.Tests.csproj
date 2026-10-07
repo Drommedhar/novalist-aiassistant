@@ -9,9 +9,17 @@
     <NoWarn>$(NoWarn);xUnit1051</NoWarn>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Remove="FakeCli/**/*.cs" />
+    <ProjectReference Include="FakeCli/Novalist.FakeAiCli.csproj" ReferenceOutputAssembly="false" />
     <ProjectReference Include="..\Novalist.Extensions.AiAssistant.csproj" AdditionalProperties="SkipExtensionDeploy=true" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
     <PackageReference Include="xunit.v3" Version="3.2.2" />
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" PrivateAssets="all" />
   </ItemGroup>
+  <Target Name="CopyFakeCli" AfterTargets="Build">
+    <ItemGroup>
+      <FakeCliFiles Include="$(MSBuildThisFileDirectory)FakeCli/bin/$(Configuration)/net8.0/Novalist.FakeAiCli.*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(FakeCliFiles)" DestinationFolder="$(OutDir)fake-cli" />
+  </Target>
 </Project>

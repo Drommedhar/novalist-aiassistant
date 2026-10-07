@@ -27,23 +27,19 @@ public sealed class AnthropicClient
     private const string DefaultBaseUrl = "https://api.anthropic.com";
 
     private static readonly HttpClient SharedClient = new() { Timeout = TimeSpan.FromMinutes(10) };
+    private readonly HttpClient _http;
+
+    public AnthropicClient(HttpClient? http = null) => _http = http ?? SharedClient;
 
     public string ApiKey { get; set; } = string.Empty;
     public string ModelId { get; set; } = "claude-opus-5";
     public string BaseUrl { get; set; } = DefaultBaseUrl;
     public int MaxTokens { get; set; } = 8192;
 
-    private CancellationTokenSource? _cts;
-
     private string Root =>
         (string.IsNullOrWhiteSpace(BaseUrl) ? DefaultBaseUrl : BaseUrl).TrimEnd('/');
 
     public bool IsConfigured => !string.IsNullOrWhiteSpace(ApiKey);
-
-    public void CancelPrompt()
-    {
-        _cts?.Cancel();
-    }
 
     private HttpRequestMessage NewRequest(HttpMethod method, string path)
     {
@@ -65,10 +61,10 @@ public sealed class AnthropicClient
         try
         {
             using var request = NewRequest(HttpMethod.Get, "/v1/models");
-            using var response = await SharedClient.SendAsync(request).ConfigureAwait(false);
+            using var response = await _http.SendAsync(request).ConfigureAwait(false);
             return response.IsSuccessStatusCode;
         }
-        catch (Exception)
+        catch (Exception error) when (error is HttpRequestException or TaskCanceledException or UriFormatException)
         {
             return false;
         }
@@ -88,7 +84,7 @@ public sealed class AnthropicClient
         try
         {
             using var request = NewRequest(HttpMethod.Get, "/v1/models?limit=100");
-            using var response = await SharedClient.SendAsync(request).ConfigureAwait(false);
+            using var response = await _http.SendAsync(request).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
                 return result;
 
@@ -128,23 +124,25 @@ public sealed class AnthropicClient
     public async Task<string> GenerateAsync(
         string systemPrompt,
         IReadOnlyList<(string Role, string Content)> messages,
-        Action<string>? onDelta = null)
+        Action<string>? onDelta = null,
+        CancellationToken cancellationToken = default,
+        string? model = null,
+        int? maxOutputTokens = null)
     {
         if (!IsConfigured)
             throw new InvalidOperationException("No Anthropic API key configured.");
 
-        _cts?.Dispose();
-        _cts = new CancellationTokenSource();
-        var token = _cts.Token;
+        var token = cancellationToken;
+        token.ThrowIfCancellationRequested();
 
         using var request = NewRequest(HttpMethod.Post, "/v1/messages");
         request.Content = new StringContent(
-            BuildRequestBody(systemPrompt, messages, MaxTokens, ModelId),
+            BuildRequestBody(systemPrompt, messages, maxOutputTokens ?? MaxTokens, model ?? ModelId),
             Encoding.UTF8,
             "application/json");
         request.Content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
 
-        using var response = await SharedClient
+        using var response = await _http
             .SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token)
             .ConfigureAwait(false);
 

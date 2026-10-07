@@ -5,6 +5,7 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
+    <InternalsVisibleTo Include="Novalist.Extensions.AiAssistant.Tests" />
     <Compile Remove="tests\**\*.cs" />
     <Compile Remove="artifacts\**\*.cs" />
     <EmbeddedResource Include="Dictation\*.py;Dictation\requirements*.txt" />
@@ -19,7 +20,7 @@
     <ProjectReference Include="..\novalist-official\Novalist.Sdk\Novalist.Sdk.csproj" />
   </ItemGroup>
   <ItemGroup Condition="'$(UseLocalSdk)' == 'false'">
-    <PackageReference Include="Novalist.Sdk" Version="*" />
+    <PackageReference Include="Novalist.Sdk" Version="13.4.0" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.0" />

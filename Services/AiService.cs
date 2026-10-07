@@ -14,7 +14,15 @@ public class AiService : IAiService
     private static readonly HttpClient SharedClient = new() { Timeout = TimeSpan.FromMinutes(10) };
     private readonly HttpClient _http;
 
-    public AiService(HttpClient? http = null) => _http = http ?? SharedClient;
+    public AiService(HttpClient? http = null) : this(http, new CopilotAcpClient(), new ClaudeCliClient()) { }
+
+    internal AiService(HttpClient? http, CopilotAcpClient copilotClient, ClaudeCliClient claudeClient)
+    {
+        _http = http ?? SharedClient;
+        _copilotClient = copilotClient;
+        _claudeClient = claudeClient;
+        _anthropicClient = new AnthropicClient(http);
+    }
 
     private string _provider = "lmstudio";
     private string _baseUrl = "http://localhost:1234";
@@ -27,9 +35,9 @@ public class AiService : IAiService
     private double _frequencyPenalty = 1.1;
     private int _repeatLastN = 64;
     private string _systemPrompt = string.Empty;
-    private readonly CopilotAcpClient _copilotClient = new();
-    private readonly ClaudeCliClient _claudeClient = new();
-    private readonly AnthropicClient _anthropicClient = new();
+    private readonly CopilotAcpClient _copilotClient;
+    private readonly ClaudeCliClient _claudeClient;
+    private readonly AnthropicClient _anthropicClient;
 
     /// <summary>Language name for prompts (e.g. "English", "German").</summary>
     public string LanguageName { get; set; } = "English";
@@ -53,7 +61,6 @@ public class AiService : IAiService
     /// </summary>
     public string ModelOverride { get; set; } = string.Empty;
 
-    /// <summary>The model this request will actually use.</summary>
     public string EffectiveModel =>
         string.IsNullOrWhiteSpace(ModelOverride) ? ModelName : ModelOverride.Trim();
 
@@ -61,49 +68,9 @@ public class AiService : IAiService
     private string LocalModel =>
         string.IsNullOrWhiteSpace(ModelOverride) ? _model : ModelOverride.Trim();
 
-    /// <summary>
-    /// Pushes a per-request model choice onto whichever client will serve it.
-    ///
-    /// The CLI and Anthropic clients hold their model as state rather than
-    /// taking it per call, so the override has to be written before the request
-    /// and put back after - otherwise one experiment silently becomes the
-    /// default for the rest of the session.
-    /// </summary>
-    private IDisposable UseRequestModel()
-    {
-        if (string.IsNullOrWhiteSpace(ModelOverride)) return NullScope.Instance;
-        var wanted = ModelOverride.Trim();
-
-        if (IsAnthropic) return new ModelScope(_anthropicClient.ModelId, v => _anthropicClient.ModelId = v, wanted);
-        if (IsClaude) return new ModelScope(_claudeClient.ModelId, v => _claudeClient.ModelId = v, wanted);
-        if (IsCopilot) return new ModelScope(_copilotClient.ModelId, v => _copilotClient.ModelId = v, wanted);
-        // The local endpoint takes the model in the payload, so LocalModel has
-        // already dealt with it.
-        return NullScope.Instance;
-    }
-
-    private sealed class NullScope : IDisposable
-    {
-        public static readonly NullScope Instance = new();
-        public void Dispose() { }
-    }
-
-    private sealed class ModelScope : IDisposable
-    {
-        private readonly string _previous;
-        private readonly Action<string> _set;
-
-        public ModelScope(string previous, Action<string> set, string wanted)
-        {
-            _previous = previous;
-            _set = set;
-            set(wanted);
-        }
-
-        public void Dispose() => _set(_previous);
-    }
-
-    private CancellationTokenSource? _cts;
+    private readonly object _requestLock = new();
+    private readonly HashSet<CancellationTokenSource> _activeRequests = [];
+    private readonly SemaphoreSlim _cliGate = new(1, 1);
 
     // Serialise model-load checks so concurrent GenerateChatAsync calls don't
     // each issue their own load request (which causes LM Studio to spawn one
@@ -167,13 +134,8 @@ public class AiService : IAiService
 
     public void Cancel()
     {
-        if (IsCopilot)
-            _copilotClient.CancelPrompt();
-        if (IsClaude)
-            _claudeClient.CancelPrompt();
-        if (IsAnthropic)
-            _anthropicClient.CancelPrompt();
-        _cts?.Cancel();
+        lock (_requestLock)
+            foreach (var request in _activeRequests.ToArray()) request.Cancel();
     }
 
     // ── Server interaction ──────────────────────────────────────────
@@ -299,7 +261,6 @@ public class AiService : IAiService
                     type = "image_url",
                     image_url = new { url = $"data:{mime};base64,{b64}" }
                 });
-                Debug.WriteLine($"[AiService] Attached image to {m.Role} message: {imagePath} ({bytes.Length} bytes, {mime})");
             }
             catch (Exception ex)
             {
@@ -323,26 +284,29 @@ public class AiService : IAiService
         };
     }
 
-    public async Task EnsureModelLoadedAsync()
+    public Task EnsureModelLoadedAsync() => EnsureModelLoadedAsync(LocalModel, CancellationToken.None);
+
+    private async Task EnsureModelLoadedAsync(string model, CancellationToken cancellationToken)
     {
-        if (!IsLmStudio || string.IsNullOrEmpty(LocalModel)) return;
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!IsLmStudio || string.IsNullOrEmpty(model)) return;
 
         // Fast path: already verified for this (model, contextLength) — no I/O.
-        if (_ensuredModel == LocalModel && _ensuredContextLength == _contextLength)
+        if (_ensuredModel == model && _ensuredContextLength == _contextLength)
             return;
 
-        await _ensureLock.WaitAsync().ConfigureAwait(false);
+        await _ensureLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             // Re-check inside the lock; another caller may have just done the
             // load while we were waiting.
-            if (_ensuredModel == LocalModel && _ensuredContextLength == _contextLength)
+            if (_ensuredModel == model && _ensuredContextLength == _contextLength)
                 return;
             using var req = new HttpRequestMessage(HttpMethod.Get, ModelsUrl);
             AddAuth(req);
-            using var res = await _http.SendAsync(req).ConfigureAwait(false);
+            using var res = await _http.SendAsync(req, cancellationToken).ConfigureAwait(false);
             res.EnsureSuccessStatusCode();
-            var json = await res.Content.ReadAsStringAsync().ConfigureAwait(false);
+            var json = await res.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
             using var doc = JsonDocument.Parse(json);
 
             bool needsLoad = true;
@@ -351,7 +315,7 @@ public class AiService : IAiService
                 foreach (var m in arr.EnumerateArray())
                 {
                     var key = m.TryGetProperty("key", out var k) ? k.GetString() : null;
-                    if (key != LocalModel) continue;
+                    if (key != model) continue;
                     if (m.TryGetProperty("loaded_instances", out var instances) && instances.GetArrayLength() > 0)
                     {
                         if (_contextLength <= 0)
@@ -375,8 +339,8 @@ public class AiService : IAiService
                                 // Unload existing instances first
                                 foreach (var inst in instances.EnumerateArray())
                                 {
-                                    var instId = inst.TryGetProperty("id", out var iid) ? iid.GetString() ?? LocalModel : LocalModel;
-                                    await UnloadInstanceAsync(instId).ConfigureAwait(false);
+                                    var instId = inst.TryGetProperty("id", out var iid) ? iid.GetString() ?? model : model;
+                                    await UnloadInstanceAsync(instId, cancellationToken).ConfigureAwait(false);
                                 }
                             }
                         }
@@ -386,12 +350,12 @@ public class AiService : IAiService
             }
 
             if (needsLoad)
-                await LoadModelAsync().ConfigureAwait(false);
+                await LoadModelAsync(model, cancellationToken).ConfigureAwait(false);
 
-            _ensuredModel = LocalModel;
+            _ensuredModel = model;
             _ensuredContextLength = _contextLength;
         }
-        catch
+        catch (Exception exception) when (exception is HttpRequestException or JsonException)
         {
             // Best-effort — proceed even if we can't verify load state
         }
@@ -401,63 +365,96 @@ public class AiService : IAiService
         }
     }
 
-    private async Task LoadModelAsync()
+    private async Task LoadModelAsync(string model, CancellationToken cancellationToken)
     {
-        var payload = new Dictionary<string, object> { ["model"] = LocalModel };
+        var payload = new Dictionary<string, object> { ["model"] = model };
         if (_contextLength > 0)
             payload["context_length"] = _contextLength;
 
         using var req = new HttpRequestMessage(HttpMethod.Post, $"{AiProviders.LmStudioRoot(_baseUrl)}/api/v1/models/load");
         AddAuth(req);
         req.Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
-        using var res = await _http.SendAsync(req).ConfigureAwait(false);
+        using var res = await _http.SendAsync(req, cancellationToken).ConfigureAwait(false);
+        res.EnsureSuccessStatusCode();
     }
 
-    private async Task UnloadInstanceAsync(string instanceId)
+    private async Task UnloadInstanceAsync(string instanceId, CancellationToken cancellationToken)
     {
         using var req = new HttpRequestMessage(HttpMethod.Post, $"{AiProviders.LmStudioRoot(_baseUrl)}/api/v1/models/unload");
         AddAuth(req);
         req.Content = new StringContent(
             JsonSerializer.Serialize(new { instance_id = instanceId }),
             Encoding.UTF8, "application/json");
-        using var res = await _http.SendAsync(req).ConfigureAwait(false);
+        using var res = await _http.SendAsync(req, cancellationToken).ConfigureAwait(false);
+        res.EnsureSuccessStatusCode();
     }
 
     // ── Chat generation with SSE streaming ──────────────────────────
 
-    public async Task<AiChatResult> GenerateChatAsync(
+    public Task<AiChatResult> GenerateChatAsync(
         List<AiChatMessage> messages,
         Action<string>? onChunk = null,
         double? temperature = null,
         Action<string>? onThinkingChunk = null,
         CancellationToken cancellationToken = default)
+        => GenerateChatCoreAsync(messages, onChunk, temperature, onThinkingChunk, cancellationToken, null);
+
+    internal Task<AiChatResult> GenerateChatWithOutputLimitAsync(
+        List<AiChatMessage> messages, int maxOutputTokens, Action<string>? onChunk,
+        double? temperature, Action<string>? onThinkingChunk, CancellationToken cancellationToken)
+        => GenerateChatCoreAsync(messages, onChunk, temperature, onThinkingChunk, cancellationToken, maxOutputTokens);
+
+    private sealed record RequestOptions(string Model, int? MaxOutputTokens);
+
+    private async Task<AiChatResult> GenerateChatCoreAsync(
+        List<AiChatMessage> messages, Action<string>? onChunk, double? temperature,
+        Action<string>? onThinkingChunk, CancellationToken cancellationToken, int? maxOutputTokens)
     {
-        // A model picked for this request, put back afterwards: the CLI and
-        // Anthropic clients hold theirs as state, so without this one
-        // experiment would silently become the session's default.
-        using var requestModel = UseRequestModel();
+        var provider = _provider;
+        var model = EffectiveModel;
+        var options = new RequestOptions(model, maxOutputTokens);
+        using var request = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        lock (_requestLock) _activeRequests.Add(request);
+        var serial = provider is "copilot" or "claude";
+        var acquired = false;
+        try
+        {
+            if (serial)
+            {
+                await _cliGate.WaitAsync(request.Token).ConfigureAwait(false);
+                acquired = true;
+            }
+            return provider switch
+            {
+                "copilot" => await GenerateChatCopilotAsync(messages, onChunk, onThinkingChunk, model, request.Token),
+                "claude" => await GenerateChatClaudeAsync(messages, onChunk, onThinkingChunk, model, request.Token),
+                "anthropic" => await GenerateChatAnthropicAsync(messages, onChunk, options, request.Token),
+                _ => await GenerateCompatibleAsync(messages, onChunk, temperature, onThinkingChunk, options, request.Token)
+            };
+        }
+        finally
+        {
+            if (acquired) _cliGate.Release();
+            lock (_requestLock) _activeRequests.Remove(request);
+        }
+    }
 
-        if (IsCopilot)
-            return await GenerateChatCopilotAsync(messages, onChunk, onThinkingChunk, cancellationToken);
-        if (IsClaude)
-            return await GenerateChatClaudeAsync(messages, onChunk, onThinkingChunk, cancellationToken);
-        if (IsAnthropic)
-            return await GenerateChatAnthropicAsync(messages, onChunk, cancellationToken);
-
-        await EnsureModelLoadedAsync().ConfigureAwait(false);
-
-        _cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        var ct = _cts.Token;
+    private async Task<AiChatResult> GenerateCompatibleAsync(
+        List<AiChatMessage> messages, Action<string>? onChunk, double? temperature,
+        Action<string>? onThinkingChunk, RequestOptions options, CancellationToken ct)
+    {
+        await EnsureModelLoadedAsync(options.Model, ct).ConfigureAwait(false);
 
         var body = new Dictionary<string, object>
         {
-            ["model"] = LocalModel,
+            ["model"] = options.Model,
             ["messages"] = messages.Select(BuildMessagePayload).ToArray(),
             ["stream"] = true,
             ["temperature"] = temperature ?? _temperature,
             ["top_p"] = _topP,
             ["frequency_penalty"] = _frequencyPenalty,
         };
+        if (options.MaxOutputTokens is { } limit) body["max_tokens"] = limit;
         if (IsLmStudio)
         {
             body["min_p"] = _minP;
@@ -476,7 +473,6 @@ public class AiService : IAiService
 
         var fullText = new StringBuilder();
         var thinkingText = new StringBuilder();
-        var buffer = new StringBuilder();
         bool insideThinkTag = false;
         var tagBuffer = new StringBuilder();
         string? finishReason = null;
@@ -505,13 +501,16 @@ public class AiService : IAiService
                     throw new InvalidOperationException($"LM Studio: {errMsg}");
                 }
 
-                if (!root.TryGetProperty("choices", out var choices)) continue;
-                var first = choices.EnumerateArray().FirstOrDefault();
-                if (!first.TryGetProperty("delta", out var delta)) continue;
+                if (!root.TryGetProperty("choices", out var choices)
+                    || choices.ValueKind != JsonValueKind.Array || choices.GetArrayLength() == 0) continue;
+                var first = choices[0];
+                if (first.ValueKind != JsonValueKind.Object) continue;
 
                 // Capture finish_reason to detect truncation
                 if (first.TryGetProperty("finish_reason", out var frEl) && frEl.ValueKind == JsonValueKind.String)
                     finishReason = frEl.GetString();
+
+                if (!first.TryGetProperty("delta", out var delta) || delta.ValueKind != JsonValueKind.Object) continue;
 
                 // Reasoning content (dedicated field)
                 if (delta.TryGetProperty("reasoning_content", out var rc))
@@ -536,7 +535,7 @@ public class AiService : IAiService
             }
             catch (JsonException ex)
             {
-                Debug.WriteLine($"[AiService] SSE JSON parse error: {ex.Message}\n  Input: {jsonStr[..Math.Min(jsonStr.Length, 500)]}");
+                Debug.WriteLine($"[AiService] SSE JSON parse error: {ex.Message}");
             }
         }
 
@@ -557,11 +556,9 @@ public class AiService : IAiService
             }
         }
 
-        _cts = null;
         var wasTruncated = finishReason == "length";
         if (wasTruncated)
             Debug.WriteLine("[AiService] WARNING: Response was truncated (finish_reason=length). Model hit token limit.");
-        Debug.WriteLine($"[AiService] GenerateChat finished. finish_reason={finishReason}, response length={fullText.Length}, thinking length={thinkingText.Length}");
         return new AiChatResult { Response = fullText.ToString(), Thinking = thinkingText.ToString(), WasTruncated = wasTruncated };
     }
 
@@ -643,10 +640,9 @@ public class AiService : IAiService
         List<AiChatMessage> messages,
         Action<string>? onChunk,
         Action<string>? onThinkingChunk,
+        string model,
         CancellationToken cancellationToken)
     {
-        _cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-
         _copilotClient.OnChunk = onChunk;
         _copilotClient.OnThinkingChunk = onThinkingChunk;
 
@@ -656,14 +652,13 @@ public class AiService : IAiService
 
         try
         {
-            var response = await _copilotClient.GenerateAsync(flat);
+            var response = await _copilotClient.GenerateAsync(flat, cancellationToken, model);
             return new AiChatResult { Response = response, Thinking = string.Empty };
         }
         finally
         {
             _copilotClient.OnChunk = null;
             _copilotClient.OnThinkingChunk = null;
-            _cts = null;
         }
     }
 
@@ -674,9 +669,9 @@ public class AiService : IAiService
         List<AiChatMessage> messages,
         Action<string>? onChunk,
         Action<string>? onThinkingChunk,
+        string model,
         CancellationToken cancellationToken)
     {
-        _cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         _claudeClient.OnChunk = onChunk;
         _claudeClient.OnThinkingChunk = onThinkingChunk;
 
@@ -688,14 +683,13 @@ public class AiService : IAiService
         try
         {
             var response = await _claudeClient
-                .GenerateAsync(system, user, _cts.Token).ConfigureAwait(false);
+                .GenerateAsync(system, user, cancellationToken, model).ConfigureAwait(false);
             return new AiChatResult { Response = response, Thinking = string.Empty };
         }
         finally
         {
             _claudeClient.OnChunk = null;
             _claudeClient.OnThinkingChunk = null;
-            _cts = null;
         }
     }
 
@@ -707,36 +701,32 @@ public class AiService : IAiService
     private async Task<AiChatResult> GenerateChatAnthropicAsync(
         List<AiChatMessage> messages,
         Action<string>? onChunk,
+        RequestOptions options,
         CancellationToken cancellationToken)
     {
-        _cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        try
-        {
-            var system = string.Join("\n\n",
-                messages.Where(m => m.Role == "system").Select(m => m.Content));
-            var turns = messages
-                .Where(m => m.Role != "system")
-                .Select(m => (m.Role, m.Content))
-                .ToList();
+        var system = string.Join("\n\n",
+            messages.Where(m => m.Role == "system").Select(m => m.Content));
+        var turns = messages
+            .Where(m => m.Role != "system")
+            .Select(m => (m.Role, m.Content))
+            .ToList();
 
-            var response = await _anthropicClient
-                .GenerateAsync(system, turns, onChunk).ConfigureAwait(false);
+        var response = await _anthropicClient
+            .GenerateAsync(system, turns, onChunk, cancellationToken, options.Model, options.MaxOutputTokens).ConfigureAwait(false);
 
-            // The Messages API never returns raw reasoning, so there is nothing
-            // to put in Thinking - leaving it empty is accurate, not a gap.
-            return new AiChatResult { Response = response, Thinking = string.Empty };
-        }
-        finally
-        {
-            _cts = null;
-        }
+        // The Messages API never returns raw reasoning.
+        return new AiChatResult { Response = response, Thinking = string.Empty };
     }
 
     /// <summary>Reset the Copilot ACP session (clears server-side history). No-op for LM Studio.</summary>
     public async Task ResetChatSessionAsync()
     {
-        if (IsCopilot)
-            await _copilotClient.ResetSessionAsync();
+        await _cliGate.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            if (IsCopilot) await _copilotClient.ResetSessionAsync();
+        }
+        finally { _cliGate.Release(); }
     }
 
     // ── Analysis methods ────────────────────────────────────────────
@@ -1008,8 +998,6 @@ public class AiService : IAiService
         // Strip markdown code fences
         cleaned = Regex.Replace(cleaned, @"```(?:json)?\s*", "").TrimEnd();
 
-        Debug.WriteLine($"[AiService] ParseFindings: cleaned length={cleaned.Length}");
-
         // Try each JSON array candidate (models sometimes emit a preview like [{"type":"...", ...}] before the real array)
         var matches = Regex.Matches(cleaned, @"\[\s*\{");
         foreach (Match m in matches)
@@ -1047,12 +1035,7 @@ public class AiService : IAiService
 
             // Skip candidates containing literal ellipsis placeholders (e.g. "...", ...)
             if (Regex.IsMatch(jsonStr, @"""\.\.\.""") || Regex.IsMatch(jsonStr, @",\s*\.\.\."))
-            {
-                Debug.WriteLine($"[AiService] ParseFindings: skipping ellipsis-placeholder candidate at {startIdx}..{endIdx}");
                 continue;
-            }
-
-            Debug.WriteLine($"[AiService] ParseFindings: trying candidate at {startIdx}..{endIdx} (length={jsonStr.Length})");
 
             List<AiFinding> items;
             try
@@ -1069,25 +1052,16 @@ public class AiService : IAiService
                 .ToList();
 
             if (valid.Count > 0)
-            {
-                Debug.WriteLine($"[AiService] ParseFindings: matched candidate at {startIdx}, {valid.Count} findings");
                 return valid.Select(NormalizeFinding).ToList();
-            }
         }
 
         // Fallback: try extracting individual JSON objects (model may have returned objects without array wrapper)
-        Debug.WriteLine("[AiService] ParseFindings: no array candidate found, trying individual object extraction.");
         var looseObjects = ExtractJsonObjects(cleaned);
         var looseValid = looseObjects
             .Where(f => !string.IsNullOrEmpty(f.Type) && !string.IsNullOrEmpty(f.Title))
             .ToList();
         if (looseValid.Count > 0)
-        {
-            Debug.WriteLine($"[AiService] ParseFindings: found {looseValid.Count} findings via loose object extraction.");
             return looseValid.Select(NormalizeFinding).ToList();
-        }
-
-        Debug.WriteLine("[AiService] ParseFindings: No valid findings found.");
         return [];
     }
 
@@ -1145,9 +1119,8 @@ public class AiService : IAiService
         {
             return JsonSerializer.Deserialize<AiFinding>(objStr, JsonOpts);
         }
-        catch (Exception ex)
+        catch (JsonException)
         {
-            Debug.WriteLine($"[AiService] TryParseObject: Direct parse failed: {ex.Message}\n  Input: {objStr[..Math.Min(objStr.Length, 500)]}");
             // Attempt repair of unescaped quotes
             var repaired = Regex.Replace(objStr,
                 @"""(type|title|description|excerpt|entityName|entityType)""\s*:\s*""([\s\S]*?)(?:""\s*(?=[,}\]]))",
@@ -1158,9 +1131,8 @@ public class AiService : IAiService
                     return $"\"{key}\": \"{val}\"";
                 });
             try { return JsonSerializer.Deserialize<AiFinding>(repaired, JsonOpts); }
-            catch (Exception ex2)
+            catch (JsonException)
             {
-                Debug.WriteLine($"[AiService] TryParseObject: Repair parse also failed: {ex2.Message}\n  Repaired: {repaired[..Math.Min(repaired.Length, 500)]}");
                 return null;
             }
         }

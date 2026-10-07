@@ -12,9 +12,7 @@ using Novalist.Sdk.Services;
 namespace Novalist.Extensions.AiAssistant.Services;
 
 /// <summary>
-/// SDK v2 bridge for the AI chat webview: wraps the existing AiChatViewModel
-/// so the web page runs the exact same logic (story-context system prompt,
-/// AI hooks, streaming, cancel) as the sidebar did.
+/// Reads selected context and forwards chat state to the extension webview.
 /// </summary>
 public sealed class ChatWebViewController : IWebViewController, IDisposable
 {
@@ -28,6 +26,9 @@ public sealed class ChatWebViewController : IWebViewController, IDisposable
 
     private readonly IHostServices _host;
     private readonly AiAssistantExtension _extension;
+    private readonly ChatStreamUpdate _stream = new();
+    private int _generation;
+    private int _disposed;
 
     public ChatWebViewController(IHostServices host, AiAssistantExtension extension)
     {
@@ -37,136 +38,146 @@ public sealed class ChatWebViewController : IWebViewController, IDisposable
         _loc = host.GetLocalization(extension.Id);
         _vm.PropertyChanged += OnVmPropertyChanged;
         _vm.Messages.CollectionChanged += OnMessagesChanged;
+        _host.ProjectLoaded += OnProjectLoaded;
     }
 
-    public Task<string?> OnMessageAsync(string json)
+    public async Task<string?> OnMessageAsync(string json)
     {
+        var generation = Volatile.Read(ref _generation);
+        if (!IsCurrent(generation)) return null;
         using var document = JsonDocument.Parse(json);
-        var type = document.RootElement.GetProperty("type").GetString();
-        switch (type)
+        var root = document.RootElement;
+        var type = root.GetProperty("type").GetString();
+        try
         {
-            case "send":
+            switch (type)
             {
-                var text = document.RootElement.GetProperty("text").GetString() ?? string.Empty;
-
-                // Anything the writer ticked in the picker goes in front of what
-                // they typed. Guessing what a chat needs from the project is the
-                // thing this replaces: a picker means the writer can see exactly
-                // what was sent, and a wrong answer is theirs to fix rather than
-                // a mystery.
-                if (document.RootElement.TryGetProperty("include", out var include)
-                    && include.ValueKind == JsonValueKind.Array)
-                {
-                    var context = BuildContext(include);
-                    if (context.Length > 0) text = context + "\n\n" + text;
-                }
-
-                _vm.UserInput = text;
-                _vm.SendCommand.Execute(null);
-                return Task.FromResult<string?>(null);
+                case "send": return await SendAsync(root, generation);
+                case "preview": return await PreviewAsync(root, generation);
+                case "models": return await ModelsAsync(generation);
+                case "contextOptions": return await ContextOptionsAsync(generation);
+                case "setModel":
+                    _extension.AiService.ModelOverride = Text(root, "model");
+                    return null;
+                case "cancel":
+                    Interlocked.Increment(ref _generation);
+                    _vm.CancelCommand.Execute(null);
+                    return null;
+                case "reset":
+                    Interlocked.Increment(ref _generation);
+                    await _vm.ClearChatCommand.ExecuteAsync(null);
+                    return null;
+                case "hydrate": return History();
+                default: return null;
             }
-            case "preview":
+        }
+        catch (OperationCanceledException) when (!IsCurrent(generation))
+        {
+            return null;
+        }
+        catch (Exception error) when ((type is "send" or "preview") && (error is IOException or InvalidOperationException))
+        {
+            return JsonSerializer.Serialize(new
             {
-                // Exactly what "send" would assemble, before a token is spent
-                // on it. The prompt was built and sent in one step and nothing
-                // showed what went, so a writer who ticked six characters and
-                // got an answer that ignored two could not find out why.
-                var blocks = document.RootElement.TryGetProperty("include", out var picked)
-                             && picked.ValueKind == JsonValueKind.Array
-                    ? ContextBlocks(picked)
-                    : [];
-                var preview = _extension.ContextEngine.Preview(blocks);
-                return Task.FromResult<string?>(JsonSerializer.Serialize(new
-                {
-                    type = "preview",
-                    text = preview.Text,
-                    estimatedTokens = preview.EstimatedTokens,
-                    tokenBudget = preview.TokenBudget,
-                    lines = preview.Lines,
-                    strings = new Dictionary<string, string>
-                    {
-                        ["previewTitle"] = _loc.T("ai.previewTitle"),
-                        ["previewHint"] = _loc.T("ai.previewHint"),
-                        ["previewBlock"] = _loc.T("ai.previewBlock"),
-                        ["previewTier"] = _loc.T("ai.previewTier"),
-                        ["previewTokens"] = _loc.T("ai.previewTokens"),
-                        ["previewKept"] = _loc.T("ai.previewKept"),
-                        ["previewDropped"] = _loc.T("ai.previewDropped"),
-                        ["previewTotal"] = _loc.T("ai.previewTotal"),
-                        ["previewEmpty"] = _loc.T("ai.previewEmpty"),
-                        ["previewClose"] = _loc.T("ai.previewClose")
-                    }
-                }, Json));
-            }
-            case "models":
-            {
-                // The model lived in the settings form and nowhere else, so
-                // trying a heavier one for a single hard paragraph meant a trip
-                // to Settings and back - which nobody does, so nobody tries.
-                var models = _extension.AiService.ListModelsAsync()
-                    .GetAwaiter().GetResult();
-                return Task.FromResult<string?>(JsonSerializer.Serialize(new
-                {
-                    type = "models",
-                    models = models.Select(m => new { id = m.Key, label = m.DisplayName }),
-                    current = _extension.AiService.ModelOverride,
-                    strings = new Dictionary<string, string>
-                    {
-                        ["modelLabel"] = _loc.T("ai.modelLabel"),
-                        ["modelFromSettings"] = _loc.T("ai.modelFromSettings")
-                    }
-                }, Json));
-            }
-            case "setModel":
-            {
-                _extension.AiService.ModelOverride =
-                    document.RootElement.TryGetProperty("model", out var chosen)
-                    && chosen.ValueKind == JsonValueKind.String
-                        ? chosen.GetString() ?? string.Empty
-                        : string.Empty;
-                return Task.FromResult<string?>(null);
-            }
-            case "contextOptions":
-                return Task.FromResult<string?>(JsonSerializer.Serialize(
-                    new { type = "contextOptions", groups = ContextOptions() }, Json));
-            case "cancel":
-                _vm.CancelCommand.Execute(null);
-                return Task.FromResult<string?>(null);
-            case "reset":
-                _vm.ClearChatCommand.Execute(null);
-                return Task.FromResult<string?>(null);
-            case "hydrate":
-                return Task.FromResult<string?>(JsonSerializer.Serialize(new
-                {
-                    type = "history",
-                    messages = _vm.Messages
-                        .Select(m => new { role = m.Role, text = m.Content, thinking = m.Thinking })
-                        .ToArray(),
-                    // Labels come from the host so the panel follows the project
-                    // language instead of being hardcoded English.
-                    strings = new Dictionary<string, string>
-                    {
-                        ["send"] = _loc.T("ai.send"),
-                        ["stop"] = _loc.T("ai.stop"),
-                        ["clear"] = _loc.T("ai.clearChat"),
-                        ["placeholder"] = _loc.T("ai.chatPlaceholder"),
-                    }
-                }, Json));
-            default:
-                return Task.FromResult<string?>(null);
+                type = type == "send" ? "sendRejected" : "previewRejected",
+                text = Text(root, "text"), error = error.Message
+            }, Json);
         }
     }
 
-    /// <summary>
-    /// What the writer can choose to send.
-    ///
-    /// Named rather than described: "the scene I am in" and "Mira Vance" are
-    /// things somebody can decide about, whereas "relevant context" is not.
-    /// </summary>
-    private object[] ContextOptions()
+    private async Task<string?> SendAsync(JsonElement message, int generation)
+    {
+        var text = Text(message, "text").Trim();
+        if (_vm.IsGenerating || text.Length == 0)
+            return JsonSerializer.Serialize(new { type = "sendRejected", text }, Json);
+        var blocks = await ContextBlocksAsync(message, generation);
+        RequireCurrent(generation);
+        if (_vm.IsGenerating)
+            return JsonSerializer.Serialize(new { type = "sendRejected", text }, Json);
+        ChatRequestPlan request;
+        try { request = _vm.Preview(text, blocks); }
+        catch (InvalidOperationException exception)
+        {
+            return JsonSerializer.Serialize(new { type = "sendRejected", text, error = exception.Message }, Json);
+        }
+        RequireCurrent(generation);
+        if (request.Dropped.Count > 0)
+            MessagePosted?.Invoke(JsonSerializer.Serialize(new
+            {
+                type = "notice",
+                text = _loc.T("context.dropped").Replace("{0}", string.Join(", ", request.Dropped))
+            }, Json));
+        RequireCurrent(generation);
+        _vm.UserInput = text;
+        _ = _vm.SendPreparedAsync(text, request);
+        return JsonSerializer.Serialize(new { type = "sendAccepted" }, Json);
+    }
+
+    private async Task<string?> PreviewAsync(JsonElement message, int generation)
+    {
+        var blocks = await ContextBlocksAsync(message, generation);
+        RequireCurrent(generation);
+        var request = _vm.Preview(Text(message, "text"), blocks);
+        RequireCurrent(generation);
+        var preview = request.Preview;
+        return JsonSerializer.Serialize(new
+        {
+            type = "preview", text = preview.Text, estimatedTokens = preview.EstimatedTokens,
+            tokenBudget = preview.TokenBudget, outputTokenReserve = request.OutputTokenReserve,
+            dropped = request.Dropped, lines = preview.Lines,
+            strings = PreviewStrings()
+        }, Json);
+    }
+
+    private Dictionary<string, string> PreviewStrings() => new()
+    {
+        ["previewTitle"] = _loc.T("ai.previewTitle"),
+        ["previewHint"] = _loc.T("ai.previewHint"),
+        ["previewBlock"] = _loc.T("ai.previewBlock"),
+        ["previewTier"] = _loc.T("ai.previewTier"),
+        ["previewTokens"] = _loc.T("ai.previewTokens"),
+        ["previewKept"] = _loc.T("ai.previewKept"),
+        ["previewDropped"] = _loc.T("ai.previewDropped"),
+        ["previewTotal"] = _loc.T("ai.previewTotal"),
+        ["previewReservedOutput"] = _loc.T("ai.previewReservedOutput"),
+        ["previewEmpty"] = _loc.T("ai.previewEmpty"),
+        ["previewClose"] = _loc.T("ai.previewClose")
+    };
+
+    private async Task<string?> ModelsAsync(int generation)
+    {
+        var models = await _extension.AiService.ListModelsAsync();
+        RequireCurrent(generation);
+        return JsonSerializer.Serialize(new
+        {
+            type = "models", models = models.Select(model => new { id = model.Key, label = model.DisplayName }),
+            current = _extension.AiService.ModelOverride,
+            strings = new Dictionary<string, string>
+            {
+                ["modelLabel"] = _loc.T("ai.modelLabel"),
+                ["modelFromSettings"] = _loc.T("ai.modelFromSettings")
+            }
+        }, Json);
+    }
+
+    private string History() => JsonSerializer.Serialize(new
+    {
+        type = "history",
+        isGenerating = _vm.IsGenerating,
+        streamingResponse = _vm.StreamingResponse,
+        streamingThinking = _vm.StreamingThinking,
+        messages = _vm.Messages.Select(message => new
+            { role = message.Role, text = message.Content, thinking = message.Thinking }).ToArray(),
+        strings = new Dictionary<string, string>
+        {
+            ["send"] = _loc.T("ai.send"), ["stop"] = _loc.T("ai.stop"),
+            ["clear"] = _loc.T("ai.clearChat"), ["placeholder"] = _loc.T("ai.chatPlaceholder")
+        }
+    }, Json);
+
+    private async Task<string?> ContextOptionsAsync(int generation)
     {
         var groups = new List<object>();
-
         var current = _host.ProjectService.CurrentScene;
         var sceneItems = new List<object>();
         if (current != null)
@@ -176,138 +187,106 @@ public sealed class ChatWebViewController : IWebViewController, IDisposable
         }
         sceneItems.Add(new { id = "outline", label = _loc.T("ai.contextOutline") });
         groups.Add(new { title = _loc.T("ai.contextWhereIAm"), items = sceneItems });
-
-        try
-        {
-            var characters = _host.EntityService.LoadCharactersAsync()
-                .GetAwaiter().GetResult()
-                .Where(c => !string.IsNullOrWhiteSpace(c.DisplayName))
-                .Select(c => new { id = "entity:" + c.Id, label = c.DisplayName })
-                .Cast<object>()
-                .ToList();
-            if (characters.Count > 0)
-                groups.Add(new { title = _loc.T("ai.contextCast"), items = characters });
-        }
-        catch (Exception)
-        {
-            // No project open, or a Codex that will not load. The scene options
-            // are still worth offering.
-        }
-
-        return [.. groups];
+        var characters = await _host.EntityService.LoadCharactersAsync();
+        RequireCurrent(generation);
+        var items = characters.Where(character => !string.IsNullOrWhiteSpace(character.DisplayName))
+            .Select(character => new { id = "entity:" + character.Id, label = character.DisplayName }).ToList();
+        if (items.Count > 0) groups.Add(new { title = _loc.T("ai.contextCast"), items });
+        return JsonSerializer.Serialize(new { type = "contextOptions", groups }, Json);
     }
 
-    /// <summary>
-    /// Assembles what was ticked, through the context engine so the order and the
-    /// budget are the same here as everywhere else in the extension.
-    /// </summary>
-    /// <summary>
-    /// The assembled context, as a string, for the send path.
-    ///
-    /// Shares its blocks with the preview: a preview that showed something
-    /// other than what is sent would be worse than no preview at all.
-    /// </summary>
-    private string BuildContext(JsonElement include)
+    private async Task<List<ContextBlock>> ContextBlocksAsync(JsonElement message, int generation)
     {
-        var assembled = _extension.ContextEngine.Assemble(ContextBlocks(include));
-
-        // What did not fit is said rather than silently dropped. A writer who
-        // ticked six characters and got four needs to know which.
-        if (assembled.Dropped.Count > 0)
-            MessagePosted?.Invoke(JsonSerializer.Serialize(new
-            {
-                type = "notice",
-                text = _loc.T("context.dropped").Replace("{0}", string.Join(", ", assembled.Dropped))
-            }, Json));
-
-        return assembled.Text;
-    }
-
-    private List<ContextBlock> ContextBlocks(JsonElement include)
-    {
-        var wanted = include.EnumerateArray()
-            .Where(e => e.ValueKind == JsonValueKind.String)
-            .Select(e => e.GetString()!)
-            .ToHashSet(StringComparer.Ordinal);
-
         var blocks = new List<ContextBlock>();
+        if (!message.TryGetProperty("include", out var include) || include.ValueKind != JsonValueKind.Array)
+            return blocks;
+        var wanted = include.EnumerateArray().Where(element => element.ValueKind == JsonValueKind.String)
+            .Select(element => element.GetString() ?? string.Empty).ToHashSet(StringComparer.Ordinal);
         if (wanted.Count == 0) return blocks;
-
         var current = _host.ProjectService.CurrentScene;
-
         if (current != null && wanted.Contains("scene:" + current.Id))
         {
-            var prose = _host.ProjectService
-                .ReadSceneContentAsync(current.ChapterGuid, current.Id)
-                .GetAwaiter().GetResult();
-            blocks.Add(new ContextBlock(
-                ContextTier.Subject, _loc.T("ai.contextThisScene"), Strip(prose)));
+            var prose = await _host.ProjectService.ReadSceneContentAsync(current.ChapterGuid, current.Id);
+            RequireCurrent(generation);
+            blocks.Add(new ContextBlock(ContextTier.Subject, _loc.T("ai.contextThisScene"), Strip(prose)));
         }
-
         if (current != null && wanted.Contains("chapter:" + current.ChapterGuid))
         {
-            var builder = new StringBuilder();
-            foreach (var scene in _host.ProjectService.GetScenesForChapter(current.ChapterGuid))
-            {
-                if (scene.Id == current.Id) continue;
-                var prose = _host.ProjectService
-                    .ReadSceneContentAsync(current.ChapterGuid, scene.Id)
-                    .GetAwaiter().GetResult();
-                builder.Append(scene.Title).Append(":\n").AppendLine(Strip(prose)).AppendLine();
-            }
-            if (builder.Length > 0)
-                blocks.Add(new ContextBlock(
-                    ContextTier.Preceding, _loc.T("ai.contextThisChapter"), builder.ToString()));
+            var chapter = await ReadChapterAsync(current, generation);
+            if (chapter.Length > 0)
+                blocks.Add(new ContextBlock(ContextTier.Preceding, _loc.T("ai.contextThisChapter"), chapter));
         }
-
         if (wanted.Contains("outline"))
-        {
-            var builder = new StringBuilder();
-            foreach (var chapter in _host.ProjectService.GetChaptersOrdered())
-            {
-                builder.Append("- ").AppendLine(chapter.Title);
-                foreach (var scene in _host.ProjectService.GetScenesForChapter(chapter.Guid))
-                {
-                    var synopsis = _host.ProjectService
-                        .GetSceneSynopsisAsync(chapter.Guid, scene.Id)
-                        .GetAwaiter().GetResult();
-                    builder.Append("  - ").Append(scene.Title);
-                    if (!string.IsNullOrWhiteSpace(synopsis))
-                        builder.Append(": ").Append(synopsis);
-                    builder.AppendLine();
-                }
-            }
-            blocks.Add(new ContextBlock(
-                ContextTier.Background, _loc.T("ai.contextOutline"), builder.ToString()));
-        }
-
-        var entityIds = wanted
-            .Where(w => w.StartsWith("entity:", StringComparison.Ordinal))
-            .Select(w => w["entity:".Length..])
-            .ToHashSet(StringComparer.Ordinal);
-
-        if (entityIds.Count > 0)
-        {
-            foreach (var id in entityIds)
-            {
-                var detailed = _host.EntityService
-                    .GetCharacterDetailedAsync(id, current?.ChapterGuid, current?.Id)
-                    .GetAwaiter().GetResult();
-                if (detailed == null) continue;
-
-                var builder = new StringBuilder();
-                foreach (var section in detailed.Sections)
-                {
-                    if (string.IsNullOrWhiteSpace(section.Content)) continue;
-                    builder.Append(section.Title).Append(": ").AppendLine(Strip(section.Content));
-                }
-                blocks.Add(new ContextBlock(
-                    ContextTier.Entities, detailed.DisplayName, builder.ToString(), 100));
-            }
-        }
-
+            blocks.Add(new ContextBlock(ContextTier.Background, _loc.T("ai.contextOutline"), await ReadOutlineAsync(generation)));
+        var entityIds = wanted.Where(id => id.StartsWith("entity:", StringComparison.Ordinal))
+            .Select(id => id["entity:".Length..]).ToHashSet(StringComparer.Ordinal);
+        if (entityIds.Count > 0 && current != null)
+            blocks.AddRange(await ReadEntitiesAsync(current, entityIds, generation));
         return blocks;
     }
+
+    private async Task<string> ReadChapterAsync(SceneInfo current, int generation)
+    {
+        var builder = new StringBuilder();
+        foreach (var scene in _host.ProjectService.GetScenesForChapter(current.ChapterGuid))
+        {
+            if (scene.Id == current.Id) continue;
+            var prose = await _host.ProjectService.ReadSceneContentAsync(current.ChapterGuid, scene.Id);
+            RequireCurrent(generation);
+            builder.Append(scene.Title).Append(":\n").AppendLine(Strip(prose)).AppendLine();
+        }
+        return builder.ToString();
+    }
+
+    private async Task<string> ReadOutlineAsync(int generation)
+    {
+        var builder = new StringBuilder();
+        foreach (var chapter in _host.ProjectService.GetChaptersOrdered())
+        {
+            builder.Append("- ").AppendLine(chapter.Title);
+            foreach (var scene in _host.ProjectService.GetScenesForChapter(chapter.Guid))
+            {
+                var synopsis = await _host.ProjectService.GetSceneSynopsisAsync(chapter.Guid, scene.Id);
+                RequireCurrent(generation);
+                builder.Append("  - ").Append(scene.Title);
+                if (!string.IsNullOrWhiteSpace(synopsis)) builder.Append(": ").Append(synopsis);
+                builder.AppendLine();
+            }
+        }
+        return builder.ToString();
+    }
+
+    private async Task<List<ContextBlock>> ReadEntitiesAsync(SceneInfo current, HashSet<string> entityIds, int generation)
+    {
+        var allowed = await _host.EntityService.GetAiContextAsync(current.ChapterGuid, current.Id);
+        RequireCurrent(generation);
+        var blocks = new List<ContextBlock>();
+        foreach (var entry in allowed.Where(entry => entityIds.Contains(entry.Id)))
+        {
+            var builder = new StringBuilder();
+            foreach (var section in entry.Sections)
+            {
+                if (!string.IsNullOrWhiteSpace(section.Content))
+                    builder.Append(section.Title).Append(": ").AppendLine(Strip(section.Content));
+            }
+            blocks.Add(new ContextBlock(ContextTier.Entities, entry.Name, builder.ToString(), 100));
+        }
+        return blocks;
+    }
+
+    private static string Text(JsonElement message, string property)
+        => message.TryGetProperty(property, out var value) && value.ValueKind == JsonValueKind.String
+            ? value.GetString() ?? string.Empty : string.Empty;
+
+    private bool IsCurrent(int generation)
+        => Volatile.Read(ref _disposed) == 0 && Volatile.Read(ref _generation) == generation;
+
+    private void RequireCurrent(int generation)
+    {
+        if (!IsCurrent(generation)) throw new OperationCanceledException("The chat context changed while it was loading.");
+    }
+
+    private void OnProjectLoaded(ProjectInfo project) => Interlocked.Increment(ref _generation);
 
     private static string Strip(string html)
     {
@@ -321,15 +300,18 @@ public sealed class ChatWebViewController : IWebViewController, IDisposable
 
     private void OnVmPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
+        if (Volatile.Read(ref _disposed) != 0) return;
         if (e.PropertyName is nameof(AiChatViewModel.StreamingResponse)
             or nameof(AiChatViewModel.StreamingThinking)
             or nameof(AiChatViewModel.IsGenerating))
         {
+            var delta = _stream.Next(_vm.StreamingResponse, _vm.StreamingThinking);
             MessagePosted?.Invoke(JsonSerializer.Serialize(new
             {
                 type = "state",
-                streaming = _vm.StreamingResponse,
-                thinking = _vm.StreamingThinking,
+                delta.StreamingDelta,
+                delta.ThinkingDelta,
+                delta.Reset,
                 isGenerating = _vm.IsGenerating
             }, Json));
         }
@@ -337,6 +319,12 @@ public sealed class ChatWebViewController : IWebViewController, IDisposable
 
     private void OnMessagesChanged(object? sender, NotifyCollectionChangedEventArgs e)
     {
+        if (Volatile.Read(ref _disposed) != 0) return;
+        if (e.Action == NotifyCollectionChangedAction.Reset)
+        {
+            MessagePosted?.Invoke(JsonSerializer.Serialize(new { type = "history", reset = true, messages = Array.Empty<object>() }, Json));
+            return;
+        }
         if (e.Action != NotifyCollectionChangedAction.Add || e.NewItems == null) return;
         foreach (AiChatMessageItem item in e.NewItems)
         {
@@ -352,6 +340,9 @@ public sealed class ChatWebViewController : IWebViewController, IDisposable
 
     public void Dispose()
     {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+        Interlocked.Increment(ref _generation);
+        _host.ProjectLoaded -= OnProjectLoaded;
         _vm.PropertyChanged -= OnVmPropertyChanged;
         _vm.Messages.CollectionChanged -= OnMessagesChanged;
         _vm.Dispose();

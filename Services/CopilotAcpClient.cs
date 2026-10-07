@@ -13,12 +13,15 @@ public class CopilotAcpClient : IDisposable
 {
     private Process? _proc;
     private int _nextId;
-    private string _buffer = string.Empty;
+    private readonly Func<ProcessStartInfo, ProcessStartInfo> _startInfo;
     private string? _sessionId;
     private readonly ConcurrentDictionary<int, TaskCompletionSource<JsonElement>> _pending = new();
-    private string _promptText = string.Empty;
+    private readonly StringBuilder _promptText = new();
     private string? _modelConfigId;
     private List<CopilotModelInfo> _cachedModels = [];
+
+    public CopilotAcpClient() : this(info => info) { }
+    internal CopilotAcpClient(Func<ProcessStartInfo, ProcessStartInfo> startInfo) => _startInfo = startInfo;
 
     /// <summary>Path to the Copilot CLI executable.</summary>
     public string ExecPath { get; set; } = "copilot";
@@ -39,11 +42,13 @@ public class CopilotAcpClient : IDisposable
     public bool IsAlive => _proc is { HasExited: false };
 
     /// <summary>Start the ACP process, initialize, and create a session.</summary>
-    public async Task StartAsync()
+    public async Task StartAsync(CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (IsAlive && _sessionId != null) return;
 
         await StopAsync();
+        cancellationToken.ThrowIfCancellationRequested();
         _sessionId = null;
 
         var psi = new ProcessStartInfo(ExecPath, "--acp --stdio")
@@ -60,7 +65,7 @@ public class CopilotAcpClient : IDisposable
         if (!string.IsNullOrEmpty(WorkingDirectory))
             psi.WorkingDirectory = WorkingDirectory;
 
-        _proc = new Process { StartInfo = psi };
+        _proc = new Process { StartInfo = _startInfo(psi) };
         _proc.OutputDataReceived += OnOutputData;
         _proc.ErrorDataReceived += OnErrorData;
         _proc.Exited += OnExited;
@@ -80,16 +85,22 @@ public class CopilotAcpClient : IDisposable
                 title = "Novalist",
                 version = "1.0.0",
             },
-        });
+        }, cancellationToken);
 
         // Create session
         var sessionResult = await RpcRequestAsync("session/new", new
         {
             cwd = !string.IsNullOrEmpty(WorkingDirectory) ? WorkingDirectory : Environment.CurrentDirectory,
             mcpServers = Array.Empty<object>(),
-        });
+        }, cancellationToken);
 
-        _sessionId = sessionResult.GetProperty("sessionId").GetString();
+        AcceptSession(sessionResult);
+    }
+
+    private void AcceptSession(JsonElement sessionResult)
+    {
+        _sessionId = sessionResult.GetProperty("sessionId").GetString()
+            ?? throw new InvalidOperationException("Copilot did not create a session.");
         ParseModels(sessionResult);
 
         // Discover config option for model selector
@@ -107,8 +118,6 @@ public class CopilotAcpClient : IDisposable
             }
         }
 
-        if (!string.IsNullOrEmpty(ModelId))
-            await SelectModelAsync(ModelId);
     }
 
     /// <summary>Stop the ACP process gracefully.</summary>
@@ -118,6 +127,7 @@ public class CopilotAcpClient : IDisposable
         var p = _proc;
         _proc = null;
         _sessionId = null;
+        FailPending("ACP process stopped");
 
         try { p.StandardInput.Close(); } catch { /* ignore */ }
 
@@ -132,7 +142,7 @@ public class CopilotAcpClient : IDisposable
     }
 
     /// <summary>Reset the session to clear server-side conversation history.</summary>
-    public async Task ResetSessionAsync()
+    public async Task ResetSessionAsync(CancellationToken cancellationToken = default)
     {
         if (!IsAlive || _sessionId == null) return;
 
@@ -140,13 +150,9 @@ public class CopilotAcpClient : IDisposable
         {
             cwd = !string.IsNullOrEmpty(WorkingDirectory) ? WorkingDirectory : Environment.CurrentDirectory,
             mcpServers = Array.Empty<object>(),
-        });
+        }, cancellationToken);
 
-        _sessionId = sessionResult.GetProperty("sessionId").GetString();
-        ParseModels(sessionResult);
-
-        if (!string.IsNullOrEmpty(ModelId))
-            await SelectModelAsync(ModelId);
+        AcceptSession(sessionResult);
     }
 
     /// <summary>Send cancel notification to abort current prompt.</summary>
@@ -154,26 +160,45 @@ public class CopilotAcpClient : IDisposable
     {
         if (_sessionId != null && _proc?.HasExited == false)
         {
-            SendMessage(new { jsonrpc = "2.0", method = "session/cancel", @params = new { sessionId = _sessionId } });
+            try { SendMessage(new { jsonrpc = "2.0", method = "session/cancel", @params = new { sessionId = _sessionId } }); }
+            catch (Exception error) when (error is IOException or InvalidOperationException)
+            {
+                FailPending("ACP process could not receive cancellation");
+            }
         }
     }
 
     /// <summary>Send a text prompt and return the full response.</summary>
-    public async Task<string> GenerateAsync(string prompt)
+    public async Task<string> GenerateAsync(string prompt, CancellationToken cancellationToken = default, string? model = null)
     {
-        if (!IsAlive || _sessionId == null)
-            await StartAsync();
-
-        _promptText = string.Empty;
-
-        var result = await RpcRequestAsync("session/prompt", new
+        cancellationToken.ThrowIfCancellationRequested();
+        using var cancellation = cancellationToken.Register(CancelPrompt);
+        JsonElement result;
+        try
         {
-            sessionId = _sessionId,
-            prompt = new[] { new { type = "text", text = prompt } },
-        });
+            if (!IsAlive || _sessionId == null)
+                await StartAsync(cancellationToken);
+            else
+                await ResetSessionAsync(cancellationToken);
 
-        var text = _promptText;
-        _promptText = string.Empty;
+            var requestModel = model ?? ModelId;
+            if (!string.IsNullOrEmpty(requestModel))
+                await SelectModelAsync(requestModel, cancellationToken);
+            _promptText.Clear();
+            result = await RpcRequestAsync("session/prompt", new
+            {
+                sessionId = _sessionId,
+                prompt = new[] { new { type = "text", text = prompt } },
+            }, cancellationToken);
+        }
+        catch (Exception) when (cancellationToken.IsCancellationRequested)
+        {
+            await StopAsync();
+            throw new OperationCanceledException(cancellationToken);
+        }
+
+        var text = _promptText.ToString();
+        _promptText.Clear();
 
         var stopReason = result.TryGetProperty("stopReason", out var sr) ? sr.GetString() : null;
         if (stopReason != "end_turn")
@@ -223,7 +248,7 @@ public class CopilotAcpClient : IDisposable
 
     // ── Internal helpers ─────────────────────────────────────────
 
-    private async Task SelectModelAsync(string modelId)
+    private async Task SelectModelAsync(string modelId, CancellationToken cancellationToken = default)
     {
         // Try session/set_config_option first (generic ACP)
         if (_modelConfigId != null)
@@ -235,22 +260,18 @@ public class CopilotAcpClient : IDisposable
                     sessionId = _sessionId,
                     configId = _modelConfigId,
                     value = modelId,
-                });
+                }, cancellationToken);
                 return;
             }
-            catch { /* fall through */ }
+            catch (CopilotRpcException exception) when (exception.Code == -32601) { /* Older servers use session/set_model. */ }
         }
 
         // Try session/set_model (Copilot-specific)
-        try
+        await RpcRequestAsync("session/set_model", new
         {
-            await RpcRequestAsync("session/set_model", new
-            {
-                sessionId = _sessionId,
-                modelId,
-            });
-        }
-        catch { /* best effort */ }
+            sessionId = _sessionId,
+            modelId,
+        }, cancellationToken);
     }
 
     private void ParseModels(JsonElement result)
@@ -270,38 +291,32 @@ public class CopilotAcpClient : IDisposable
 
     private void SendMessage(object msg)
     {
-        if (_proc?.HasExited != false) return;
-        try
-        {
-            var json = JsonSerializer.Serialize(msg);
-            _proc.StandardInput.WriteLine(json);
-            _proc.StandardInput.Flush();
-        }
-        catch { /* process may have died */ }
+        var process = _proc;
+        if (process?.HasExited != false) throw new InvalidOperationException("ACP process is not running.");
+        var json = JsonSerializer.Serialize(msg);
+        process.StandardInput.WriteLine(json);
+        process.StandardInput.Flush();
     }
 
-    private Task<JsonElement> RpcRequestAsync(string method, object parameters)
+    private async Task<JsonElement> RpcRequestAsync(string method, object parameters, CancellationToken cancellationToken = default)
     {
         var id = Interlocked.Increment(ref _nextId);
         var tcs = new TaskCompletionSource<JsonElement>(TaskCreationOptions.RunContinuationsAsynchronously);
         _pending[id] = tcs;
 
-        SendMessage(new { jsonrpc = "2.0", id, method, @params = parameters });
-
-        // Timeout to avoid hanging forever. 60s is generous for normal RPC;
-        // streaming session requests handle their own cancellation outside of this.
-        _ = Task.Delay(TimeSpan.FromSeconds(60)).ContinueWith(_ =>
+        try
         {
-            if (_pending.TryRemove(id, out var t))
-                t.TrySetException(new TimeoutException($"ACP request '{method}' timed out"));
-        });
-
-        return tcs.Task;
+            cancellationToken.ThrowIfCancellationRequested();
+            SendMessage(new { jsonrpc = "2.0", id, method, @params = parameters });
+            var timeout = method == "session/prompt" ? TimeSpan.FromMinutes(10) : TimeSpan.FromSeconds(60);
+            return await tcs.Task.WaitAsync(timeout, cancellationToken).ConfigureAwait(false);
+        }
+        finally { _pending.TryRemove(id, out _); }
     }
 
     private void OnOutputData(object sender, DataReceivedEventArgs e)
     {
-        if (e.Data == null) return;
+        if (e.Data == null || !ReferenceEquals(sender, _proc)) return;
         ProcessLine(e.Data);
     }
 
@@ -331,7 +346,8 @@ public class CopilotAcpClient : IDisposable
                 if (_pending.TryRemove(id, out var tcs))
                 {
                     var message = err.TryGetProperty("message", out var m) ? m.GetString() ?? "ACP error" : "ACP error";
-                    tcs.TrySetException(new InvalidOperationException(message));
+                    var code = err.TryGetProperty("code", out var errorCode) ? errorCode.GetInt32() : 0;
+                    tcs.TrySetException(new CopilotRpcException(code, message));
                 }
                 return;
             }
@@ -417,6 +433,7 @@ public class CopilotAcpClient : IDisposable
         if (!msg.TryGetProperty("params", out var p) ||
             !p.TryGetProperty("update", out var update))
             return;
+        if (!p.TryGetProperty("sessionId", out var session) || session.GetString() != _sessionId) return;
 
         var sessionUpdate = update.TryGetProperty("sessionUpdate", out var su) ? su.GetString() : null;
 
@@ -427,7 +444,7 @@ public class CopilotAcpClient : IDisposable
                 content.TryGetProperty("text", out var text))
             {
                 var t = text.GetString() ?? "";
-                _promptText += t;
+                _promptText.Append(t);
                 OnChunk?.Invoke(t);
             }
         }
@@ -449,15 +466,24 @@ public class CopilotAcpClient : IDisposable
 
     private void OnExited(object? sender, EventArgs e)
     {
+        if (!ReferenceEquals(sender, _proc)) return;
         _proc = null;
         _sessionId = null;
+        FailPending("ACP process exited");
+    }
 
-        // Fail all pending requests
+    private void FailPending(string message)
+    {
         foreach (var kvp in _pending)
         {
             if (_pending.TryRemove(kvp.Key, out var tcs))
-                tcs.TrySetException(new InvalidOperationException("ACP process exited"));
+                tcs.TrySetException(new InvalidOperationException(message));
         }
+    }
+
+    private sealed class CopilotRpcException(int code, string message) : InvalidOperationException(message)
+    {
+        public int Code { get; } = code;
     }
 
     public void Dispose()

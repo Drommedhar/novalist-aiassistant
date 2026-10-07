@@ -20,6 +20,10 @@ namespace Novalist.Extensions.AiAssistant.Services;
 /// </summary>
 public sealed class ClaudeCliClient
 {
+    private readonly Func<ProcessStartInfo, ProcessStartInfo> _startInfo;
+    public ClaudeCliClient() : this(info => info) { }
+    internal ClaudeCliClient(Func<ProcessStartInfo, ProcessStartInfo> startInfo) => _startInfo = startInfo;
+
     /// <summary>
     /// The only environment the CLI is given.
     ///
@@ -108,8 +112,9 @@ public sealed class ClaudeCliClient
     /// Runs one prompt and returns the model's text.
     /// </summary>
     public async Task<string> GenerateAsync(
-        string systemPrompt, string userPrompt, CancellationToken cancellationToken)
+        string systemPrompt, string userPrompt, CancellationToken cancellationToken, string? model = null)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         // Direct spawn with a clean environment. `claude --version` already works
         // this way from the backend, so the spawn mechanism itself is sound; the
         // environment was the variable. The system prompt travels as a file so
@@ -143,10 +148,11 @@ public sealed class ClaudeCliClient
                 args.Add("--system-prompt-file");
                 args.Add(systemFile);
             }
-            if (!string.IsNullOrWhiteSpace(ModelId))
+            var requestModel = model ?? ModelId;
+            if (!string.IsNullOrWhiteSpace(requestModel))
             {
                 args.Add("--model");
-                args.Add(ModelId);
+                args.Add(requestModel);
             }
 
             (exitCode, stdout, stderr) =
@@ -231,6 +237,7 @@ public sealed class ClaudeCliClient
                 if (TryHandleStreamLine(line, answer, out var final)) resultLine = final;
             }
 
+            await stdinTask.ConfigureAwait(false);
             await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
 
             // The `result` event carries the same envelope the non-streaming mode
@@ -305,7 +312,6 @@ public sealed class ClaudeCliClient
             + $"\n  stdout: {(stdout.Trim().Length == 0 ? "(empty)" : stdout.Trim())}"
             + $"\n  stderr: {(stderr.Trim().Length == 0 ? "(empty)" : stderr.Trim())}";
         Console.Error.WriteLine(report);
-        Debug.WriteLine(report);
     }
 
     private static string Truncate(string value) =>
@@ -385,7 +391,8 @@ public sealed class ClaudeCliClient
             psi.ArgumentList.Add("/c");
             psi.ArgumentList.Add(batFile);
 
-            using var cmd = Process.Start(psi)!;
+            using var cmd = Process.Start(psi)
+                ?? throw new InvalidOperationException("Could not start the Claude environment probe.");
             await cmd.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
 
             string Read(string path) => File.Exists(path)
@@ -403,7 +410,6 @@ public sealed class ClaudeCliClient
 
         var report = sb.ToString().TrimEnd();
         Console.Error.WriteLine(report);
-        Debug.WriteLine(report);
     }
 
     /// <summary>Stops the run in flight.</summary>
@@ -499,11 +505,6 @@ public sealed class ClaudeCliClient
         }
     }
 
-    /// <summary>
-    /// Runs the CLI once, feeding <paramref name="stdin"/> in and collecting both
-    /// streams. Reads run concurrently with the wait so a large response cannot
-    /// deadlock against a full pipe buffer.
-    /// </summary>
     /// <summary>The start info both run paths share: redirected streams, no
     /// window, UTF-8, a neutral working directory, and the clean environment.</summary>
     private ProcessStartInfo BuildStartInfo(IReadOnlyList<string> args)
@@ -525,7 +526,7 @@ public sealed class ClaudeCliClient
         };
         foreach (var arg in args) startInfo.ArgumentList.Add(arg);
         ApplyCleanEnvironment(startInfo);
-        return startInfo;
+        return _startInfo(startInfo);
     }
 
     private async Task<(int ExitCode, string StdOut, string StdErr)> RunAsync(
