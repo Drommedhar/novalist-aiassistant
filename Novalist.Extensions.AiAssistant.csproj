@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
   </PropertyGroup>
@@ -15,12 +15,12 @@
     <Content Include="Locales\*.json" CopyToOutputDirectory="PreserveNewest" Link="Locales\%(Filename)%(Extension)" />
     <Content Include="web\*.html" CopyToOutputDirectory="PreserveNewest" Link="web\%(Filename)%(Extension)" />
   </ItemGroup>
-  <!-- Use local Sdk for development. CI/release builds use the NuGet package instead (see Directory.Build.props or pass /p:UseLocalSdk=false). -->
+  <!-- Development and CI use the host SDK checkout; UseLocalSdk=false selects the released package. -->
   <ItemGroup Condition="'$(UseLocalSdk)' != 'false'">
     <ProjectReference Include="..\novalist-official\Novalist.Sdk\Novalist.Sdk.csproj" />
   </ItemGroup>
   <ItemGroup Condition="'$(UseLocalSdk)' == 'false'">
-    <PackageReference Include="Novalist.Sdk" Version="13.4.0" />
+    <PackageReference Include="Novalist.Sdk" Version="[15.0.0]" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.0" />

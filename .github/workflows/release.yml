@@ -6,7 +6,7 @@ on:
       - "v*"
 
 env:
-  DOTNET_VERSION: 8.0.x
+  DOTNET_VERSION: 10.0.x
   EXTENSION_ID: com.novalist.ai
   CONFIGURATION: Release
 
@@ -39,7 +39,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: Drommedhar/novalist-official
-          ref: ba8b6d328b64ded6e923baa25ce086d7e9e799e4
+          ref: v3.6.0
           path: novalist-official
 
       - name: Setup .NET
@@ -70,7 +70,7 @@ jobs:
       - name: Create extension ZIP
         working-directory: novalist-aiassistant
         run: |
-          cd bin/${{ env.CONFIGURATION }}/net8.0
+          cd bin/${{ env.CONFIGURATION }}/net10.0
           # The SDK assembly is left out on purpose: the host supplies it, and
           # shipping a copy is how an extension ends up loading two different
           # versions of the same types. A project reference copies it into the
