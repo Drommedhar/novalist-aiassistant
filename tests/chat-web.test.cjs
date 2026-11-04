@@ -12,6 +12,7 @@ function page() {
       this.value = '';
       this.hidden = false;
       this.disabled = false;
+      this.checked = false;
       this._text = '';
     }
     set textContent(value) { this._text = value; this.children = []; }
@@ -21,7 +22,10 @@ function page() {
     remove() { if (this.parent) this.parent.children = this.parent.children.filter(child => child !== this); }
     addEventListener(name, handler) { this.events.set(name, handler); }
     setAttribute() {}
-    querySelectorAll() { return []; }
+    querySelectorAll(selector) {
+      const descendants = this.children.flatMap(child => [child, ...child.querySelectorAll('*')]);
+      return selector === 'input:checked' ? descendants.filter(child => child.type === 'checkbox' && child.checked) : descendants;
+    }
   }
   const elements = new Map();
   const element = id => {
@@ -123,4 +127,41 @@ test('hydration restores an active stream and terminal messages do not duplicate
   chat.flush();
   assert.equal(chat.element('messages').textContent, 'existing delta');
   assert.equal(chat.element('send').disabled, false);
+});
+
+test('reopening context refreshes scene options and keeps available selections for preview and send', () => {
+  const chat = page();
+  const toggle = () => chat.element('contextToggle').events.get('click')();
+  const options = scene => ({ type: 'contextOptions', groups: [{ title: 'Story', items: [
+    { id: 'scene:' + scene, label: scene }, { id: 'outline', label: 'Outline' },
+  ] }] });
+  toggle();
+  chat.message(options('one'));
+  for (const label of chat.element('context').children.slice(1)) {
+    const box = label.children[0];
+    box.checked = true;
+    box.events.get('change')();
+  }
+  toggle();
+  toggle();
+  assert.equal(chat.posts.filter(post => post.type === 'contextOptions').length, 2);
+  chat.message(options('two'));
+  assert.equal(chat.element('contextCount').textContent, '1');
+  chat.element('input').value = 'draft';
+  chat.element('previewPanel').hidden = true;
+  chat.element('preview').onclick();
+  assert.deepEqual(chat.posts.at(-1).include, ['outline']);
+  chat.send();
+  assert.deepEqual(chat.posts.at(-1).include, ['outline']);
+});
+
+test('context refresh with no options clears selected count', () => {
+  const chat = page();
+  chat.message({ type: 'contextOptions', groups: [{ title: 'Story', items: [{ id: 'outline', label: 'Outline' }] }] });
+  const box = chat.element('context').children[1].children[0];
+  box.checked = true;
+  box.events.get('change')();
+  assert.equal(chat.element('contextCount').textContent, '1');
+  chat.message({ type: 'contextOptions', groups: [] });
+  assert.equal(chat.element('contextCount').hidden, true);
 });

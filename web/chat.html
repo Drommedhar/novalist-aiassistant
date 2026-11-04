@@ -51,7 +51,7 @@ button:disabled { opacity: .5; cursor: default; }
 /* The picker. Deliberately a list of named things rather than a description of
    a strategy: "the scene I am in" and "Mira Vance" are things somebody can
    decide about, whereas "relevant context" is not. */
-#context {
+#context:not([hidden]) {
   max-height: 40vh; overflow-y: auto; padding: 8px 10px;
   border-top: 1px solid var(--border); background: var(--card);
   display: flex; flex-direction: column; gap: 2px;
@@ -345,9 +345,10 @@ function updateCount() {
 }
 
 function drawContext(groups) {
+  const selected = new Set(ticked());
   contextEl.textContent = '';
   if (!groups || !groups.length) {
-    contextEl.appendChild(document.createTextNode(''));
+    updateCount();
     return;
   }
   for (const group of groups) {
@@ -362,6 +363,7 @@ function drawContext(groups) {
       const box = document.createElement('input');
       box.type = 'checkbox';
       box.value = item.id;
+      box.checked = selected.has(item.id);
       box.addEventListener('change', updateCount);
       label.appendChild(box);
       label.appendChild(document.createTextNode(' ' + item.label));
@@ -385,7 +387,7 @@ contextToggle.addEventListener('click', () => {
   const showing = !contextEl.hidden;
   contextEl.hidden = showing;
   contextToggle.setAttribute('aria-expanded', String(!showing));
-  if (!showing && !contextEl.childElementCount) post({ type: 'contextOptions' });
+  if (!showing) post({ type: 'contextOptions' });
 });
 
 sendBtn.addEventListener('click', send);
