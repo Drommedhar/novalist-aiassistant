@@ -39,8 +39,9 @@ select {
 #status { font-size: 11px; color: var(--subtle); padding: 0 12px; }
 #turns { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
 .turn { max-width: 85%; padding: 8px 12px; border-radius: 10px; white-space: pre-wrap; }
-.turn .speaker { font-size: 11px; color: var(--subtle); margin-bottom: 2px; }
+.turn .speaker { font-size: var(--nl-font-caption, 12px); font-weight: 600; color: var(--dim); margin-bottom: 2px; }
 .turn.user { align-self: flex-end; background: var(--accent); color: var(--on-accent); }
+.turn.user .speaker { color: inherit; }
 .turn.character { align-self: flex-start; background: var(--card); border: 1px solid var(--border); }
 #composer { display: flex; gap: 8px; padding: 10px; border-top: 1px solid var(--border); }
 #input {
