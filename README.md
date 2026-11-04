@@ -44,13 +44,13 @@ There is no session length limit. Clips are processed in order, and the pending 
 
 ### AI Chat
 
-A chat panel opens in the right sidebar for brainstorming, character consistency checks and writing feedback. Choose which scene, chapter, outline or characters to include with **Context**. An empty picker sends no automatic project roster. Selected characters follow the host's AI exclusions for entries and sections.
+A chat panel opens in the right sidebar for brainstorming, character consistency checks and writing feedback. Choose which scene, chapter, outline or Codex entries to include with **Context**. The picker includes characters, locations, items, lore and registered custom types. It refreshes when reopened and keeps selections that are still available. An empty picker sends no automatic project roster. Selected entries follow the host's AI exclusions for entries and sections.
 
 - Streaming responses with live preview while the AI generates its answer.
 - Recent conversation turns fit within the configured context budget together with the system instructions, selected context and current message. Preview shows the complete assembled request, estimated input size, reserved output space and omitted context or older turns. Counts are estimates, not provider tokenizer measurements.
 - Support for models with a thinking/reasoning step (the thinking output is displayed in a collapsible section).
 - Clearing chat cancels the current reply. Opening another project clears the old conversation and retires late responses.
-- A **Context** button that lets you say exactly what the model is told: this scene, the rest of the chapter, the outline, or particular characters. What you tick is what is sent — nothing is inferred, and if something had to be left out to fit the budget the panel says which.
+- A **Context** button that lets you say exactly what the model is told: this scene, the rest of the chapter, the outline, or particular Codex entries. Eligible selected content is sent without inferring additional entries, and if something had to be left out to fit the budget the panel says which.
 
 ### Editorial critique, in the margin
 
