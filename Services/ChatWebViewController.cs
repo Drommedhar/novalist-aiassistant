@@ -189,10 +189,30 @@ public sealed class ChatWebViewController : IWebViewController, IDisposable
         groups.Add(new { title = _loc.T("ai.contextWhereIAm"), items = sceneItems });
         var characters = await _host.EntityService.LoadCharactersAsync();
         RequireCurrent(generation);
-        var items = characters.Where(character => !string.IsNullOrWhiteSpace(character.DisplayName))
-            .Select(character => new { id = "entity:" + character.Id, label = character.DisplayName }).ToList();
-        if (items.Count > 0) groups.Add(new { title = _loc.T("ai.contextCast"), items });
+        AddEntityGroup(groups, _loc.T("ai.contextCast"), characters.Select(entry => (entry.Id, entry.DisplayName)));
+        var locations = await _host.EntityService.LoadLocationsAsync();
+        RequireCurrent(generation);
+        AddEntityGroup(groups, _loc.T("ai.contextLocations"), locations.Select(entry => (entry.Id, entry.Name)));
+        var items = await _host.EntityService.LoadItemsAsync();
+        RequireCurrent(generation);
+        AddEntityGroup(groups, _loc.T("ai.contextItems"), items.Select(entry => (entry.Id, entry.Name)));
+        var lore = await _host.EntityService.LoadLoreAsync();
+        RequireCurrent(generation);
+        AddEntityGroup(groups, _loc.T("ai.contextLore"), lore.Select(entry => (entry.Id, entry.Name)));
+        foreach (var type in _host.EntityService.GetCustomEntityTypes())
+        {
+            var entries = await _host.EntityService.LoadCustomEntitiesAsync(type.TypeKey);
+            RequireCurrent(generation);
+            AddEntityGroup(groups, type.DisplayNamePlural, entries.Select(entry => (entry.Id, entry.Name)));
+        }
         return JsonSerializer.Serialize(new { type = "contextOptions", groups }, Json);
+    }
+
+    private static void AddEntityGroup(List<object> groups, string title, IEnumerable<(string Id, string Name)> entries)
+    {
+        var items = entries.Where(entry => !string.IsNullOrWhiteSpace(entry.Name))
+            .Select(entry => new { id = "entity:" + entry.Id, label = entry.Name }).ToList();
+        if (items.Count > 0) groups.Add(new { title, items });
     }
 
     private async Task<List<ContextBlock>> ContextBlocksAsync(JsonElement message, int generation)

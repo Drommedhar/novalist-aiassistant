@@ -33,6 +33,49 @@ public sealed class AuditChatLifecycleTests
         Assert.DoesNotContain("private-entity", fixture.Requests.Single());
     }
 
+    [Fact]
+    public async Task ContextPickerListsBuiltInAndCustomCodexTypes()
+    {
+        using var fixture = new ChatFixture();
+        using var controller = new ChatWebViewController(fixture.Host, fixture.Extension);
+        var reply = await controller.OnMessageAsync("""{"type":"contextOptions"}""");
+        Assert.NotNull(reply);
+        using var document = JsonDocument.Parse(reply);
+        var groups = document.RootElement.GetProperty("groups").EnumerateArray().ToList();
+        Assert.Equal(["ai.contextWhereIAm", "ai.contextCast", "ai.contextLocations", "ai.contextItems", "ai.contextLore", "Factions"],
+            groups.Select(group => group.GetProperty("title").GetString()));
+        Assert.Equal(["entity:allowed", "entity:harbor", "entity:key", "entity:myth", "entity:guild"],
+            groups.Skip(1).SelectMany(group => group.GetProperty("items").EnumerateArray())
+                .Select(item => item.GetProperty("id").GetString()));
+    }
+
+    [Theory]
+    [InlineData("harbor", "location")]
+    [InlineData("key", "item")]
+    [InlineData("myth", "lore")]
+    [InlineData("guild", "faction")]
+    public async Task SelectedCodexTypeReachesPreviewAndSendWithoutUnselectedOrExcludedContent(string id, string type)
+    {
+        using var fixture = new ChatFixture
+        {
+            ContextEntries = [
+                new() { Id = id, TypeKey = type, Name = "Selected", Sections = [new() { Title = "Notes", Content = "selected-content" }] },
+                new() { Id = "unselected", Name = "Other", Sections = [new() { Title = "Notes", Content = "unselected-content" }] }
+            ]
+        };
+        using var controller = new ChatWebViewController(fixture.Host, fixture.Extension);
+        var include = new[] { "entity:" + id, "entity:private-entity" };
+        var preview = await controller.OnMessageAsync(JsonSerializer.Serialize(new { type = "preview", include }));
+        Assert.Contains("selected-content", preview);
+        Assert.DoesNotContain("unselected-content", preview);
+        Assert.DoesNotContain("private-entity", preview);
+        await controller.OnMessageAsync(JsonSerializer.Serialize(new { type = "send", text = "Hello", include }));
+        await fixture.RequestReceived.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        Assert.Contains("selected-content", fixture.Requests.Single());
+        Assert.DoesNotContain("unselected-content", fixture.Requests.Single());
+        Assert.DoesNotContain("private-entity", fixture.Requests.Single());
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -210,6 +253,8 @@ public sealed class AuditChatLifecycleTests
         public Exception? ContextError { get; set; }
         public Queue<Action> PendingUi { get; } = new();
         public IReadOnlyList<IAiHook> Hooks { get; set; } = [];
+        public IReadOnlyList<AiContextEntryInfo> ContextEntries { get; set; } =
+            [new() { Id = "allowed", Name = "Allowed", Sections = [new() { Title = "Profile", Content = "allowed-section" }] }];
         public IHostServices Host { get; }
         public AiAssistantExtension Extension { get; }
 
@@ -236,6 +281,12 @@ public sealed class AuditChatLifecycleTests
             var entities = ServiceProxy.Create<IExtensionEntityService>((method, _) => method.Name switch
             {
                 "GetAiContextAsync" => ReadContextAsync(),
+                "LoadCharactersAsync" => Task.FromResult<IReadOnlyList<CharacterInfo>>([new() { Id = "allowed", DisplayName = "Allowed" }]),
+                "LoadLocationsAsync" => Task.FromResult<IReadOnlyList<LocationInfo>>([new() { Id = "harbor", Name = "Harbor" }]),
+                "LoadItemsAsync" => Task.FromResult<IReadOnlyList<ItemInfo>>([new() { Id = "key", Name = "Key" }]),
+                "LoadLoreAsync" => Task.FromResult<IReadOnlyList<LoreInfo>>([new() { Id = "myth", Name = "Myth" }]),
+                "GetCustomEntityTypes" => new List<CustomEntityTypeInfo> { new() { TypeKey = "faction", DisplayNamePlural = "Factions" } },
+                "LoadCustomEntitiesAsync" => Task.FromResult<IReadOnlyList<CustomEntityInfo>>([new() { Id = "guild", Name = "Guild", EntityTypeKey = "faction" }]),
                 _ => throw new InvalidOperationException("Chat accessed unfiltered entity data: " + method.Name)
             });
             Host = ServiceProxy.Create<IHostServices>((method, args) =>
@@ -269,7 +320,7 @@ public sealed class AuditChatLifecycleTests
             if (ContextError != null) throw ContextError;
             ContextRequested.TrySetResult();
             if (HoldContext) await ContextReleased.Task;
-            return [new() { Id = "allowed", Name = "Allowed", Sections = [new() { Title = "Profile", Content = "allowed-section" }] }];
+            return ContextEntries;
         }
         public void Dispose() => _http.Dispose();
     }
