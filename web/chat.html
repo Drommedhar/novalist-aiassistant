@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <script src="__novalist/theme.js"></script>
+<link rel="stylesheet" href="panel-controls.css" />
 <title>AI Chat</title>
 <style>
 :root {
@@ -55,8 +56,8 @@ button:disabled { opacity: .5; cursor: default; }
    decide about, whereas "relevant context" is not. */
 .chat-popover {
   position: fixed; inset: auto; margin: 0;
-  overflow: auto; padding: var(--nl-space-md, 12px);
-  border: 1px solid var(--border); border-radius: var(--nl-radius-md, 8px);
+  overflow: auto; padding: var(--nl-space-lg, 16px);
+  border: 1px solid var(--border); border-radius: var(--nl-radius-lg, 12px);
   background: var(--card); color: var(--text); font: inherit;
   box-shadow: 0 var(--nl-space-tightest, 4px) var(--nl-space-xl, 24px) color-mix(in srgb, var(--bg), transparent 40%);
   overflow-wrap: anywhere;
@@ -98,9 +99,21 @@ button:disabled { opacity: .5; cursor: default; }
 #previewPanel pre {
   white-space: pre-wrap;
   word-break: break-word;
-  font-size: 12px;
-  margin: 8px 0 0;
+  font-family: var(--nl-font-mono, ui-monospace, monospace);
+  font-size: inherit;
+  margin: var(--nl-space-sm, 8px) 0 0;
+  padding: var(--nl-space-md, 12px); background: var(--bg); border-radius: var(--nl-radius-md, 8px);
 }
+.popover-header { display: flex; align-items: center; justify-content: space-between; gap: var(--nl-space-md, 12px); position: sticky; top: 0; z-index: 1; background: var(--card); padding-bottom: var(--nl-space-sm, 8px); border-bottom: 1px solid var(--border); }
+#previewContent > p:first-child { margin-top: var(--nl-space-sm, 8px); }
+.preview-totals { display: flex; flex-wrap: wrap; justify-content: space-between; gap: var(--nl-space-sm, 8px); padding-block: var(--nl-space-sm, 8px); margin-bottom: var(--nl-space-sm, 8px); color: var(--dim); font-variant-numeric: tabular-nums; }
+.prompt-details summary { cursor: pointer; color: var(--dim); font-weight: 600; padding-block: var(--nl-space-sm, 8px); }
+#model { display: flex; align-items: center; justify-content: space-between; gap: var(--nl-space-md, 12px); }
+#model::after { content: ''; width: 6px; height: 6px; border: solid currentColor; border-width: 0 1px 1px 0; transform: rotate(45deg); }
+#modelMenu:popover-open { display: grid; gap: var(--nl-space-tightest, 4px); }
+.model-option { text-align: left; background: transparent; color: var(--text); }
+.model-option:hover, .model-option:focus-visible { background: var(--bg); }
+.model-option[aria-checked="true"] { background: color-mix(in srgb, var(--accent) 18%, var(--card)); color: var(--text); box-shadow: inset 3px 0 var(--accent); }
 </style>
 </head>
 <body>
@@ -116,13 +129,17 @@ button:disabled { opacity: .5; cursor: default; }
   </form>
   <div id="contextOptions"></div>
 </div>
-<div id="previewPanel" class="chat-popover" popover="auto" role="dialog" aria-labelledby="preview" hidden></div>
+<div id="previewPanel" class="chat-popover" popover="auto" role="dialog" aria-labelledby="preview" hidden>
+  <header class="popover-header"><strong data-i18n="previewTitle">Preview</strong><button id="closePreview" type="button" class="secondary" data-i18n="previewClose">Close</button></header>
+  <div id="previewContent"></div>
+</div>
+<div id="modelMenu" class="chat-popover" popover="auto" role="menu" aria-labelledby="model" hidden></div>
 <div id="composer">
   <button id="contextToggle" class="secondary" aria-expanded="false" aria-controls="context" aria-haspopup="dialog"
           data-i18n="context" title="Choose what the model is told">Context<span
           id="contextCount" class="badge" hidden></span></button>
   <textarea id="input" rows="2" data-i18n-ph="placeholder" placeholder="Ask about your story..."></textarea>
-  <select id="model" class="secondary" title="Which model answers this"></select>
+  <button id="model" type="button" class="secondary" title="Which model answers this" aria-haspopup="menu" aria-expanded="false" aria-controls="modelMenu" hidden><span id="modelLabel"></span></button>
   <button id="preview" class="secondary" data-i18n="previewTitle" aria-expanded="false" aria-controls="previewPanel" aria-haspopup="dialog"
           title="See exactly what will be sent">Preview</button>
   <button id="send" data-i18n="send">Send</button>
@@ -151,7 +168,10 @@ function applyStrings(map) {
 }
 const messagesEl = document.getElementById('messages');
 const modelSelect = document.getElementById('model');
+const modelMenu = document.getElementById('modelMenu');
+const modelLabel = document.getElementById('modelLabel');
 const previewPanel = document.getElementById('previewPanel');
+const previewContent = document.getElementById('previewContent');
 const previewBtn = document.getElementById('preview');
 const contextEl = document.getElementById('context');
 const contextOptionsEl = document.getElementById('contextOptions');
@@ -178,24 +198,24 @@ function positionPanel(panel, button) {
   const gap = 12;
   const viewport = document.documentElement;
   const anchor = button.getBoundingClientRect();
-  const width = Math.max(0, Math.min(panel === contextEl ? 400 : 900, viewport.clientWidth - gap * 2));
+  const width = Math.max(0, Math.min(panel === contextEl ? 400 : panel === modelMenu ? 300 : 760, viewport.clientWidth - gap * 2));
   const above = anchor.top;
   const below = viewport.clientHeight - anchor.bottom;
   const openAbove = above >= below;
   panel.style.width = width + 'px';
-  panel.style.maxHeight = Math.max(0, Math.min(viewport.clientHeight * 0.75, (openAbove ? above : below) - gap * 2)) + 'px';
+  panel.style.maxHeight = Math.max(0, Math.min(viewport.clientHeight * 0.65, (openAbove ? above : below) - gap * 2)) + 'px';
   panel.style.left = Math.max(gap, Math.min(anchor.left, viewport.clientWidth - width - gap)) + 'px';
   panel.style.top = (openAbove ? Math.max(gap, anchor.top - panel.offsetHeight - gap) : anchor.bottom + gap) + 'px';
 }
 
 function showPanel(panel, button) {
-  for (const other of [contextEl, previewPanel]) if (other !== panel) hidePanel(other);
+  for (const other of [contextEl, previewPanel, modelMenu]) if (other !== panel) hidePanel(other);
   panel.hidden = false;
   panel.showPopover({ source: button });
   positionPanel(panel, button);
 }
 
-for (const [panel, button] of [[contextEl, contextToggle], [previewPanel, previewBtn]]) {
+for (const [panel, button] of [[contextEl, contextToggle], [previewPanel, previewBtn], [modelMenu, modelSelect]]) {
   panel.addEventListener('toggle', (event) => {
     panel.hidden = event.newState === 'closed';
     button.setAttribute('aria-expanded', String(!panel.hidden));
@@ -204,6 +224,11 @@ for (const [panel, button] of [[contextEl, contextToggle], [previewPanel, previe
 window.addEventListener('resize', () => {
   positionPanel(contextEl, contextToggle);
   positionPanel(previewPanel, previewBtn);
+  positionPanel(modelMenu, modelSelect);
+});
+document.getElementById('closePreview').addEventListener('click', () => {
+  hidePanel(previewPanel);
+  previewBtn.focus();
 });
 
 function setBudgetSaving(saving) {
@@ -305,7 +330,7 @@ window.addEventListener('message', (event) => {
       hidePanel(previewPanel);
       hidePanel(contextEl);
       previewRequestId++;
-      previewPanel.textContent = '';
+      previewContent.textContent = '';
       contextOptionsEl.textContent = '';
       updateCount();
     }
@@ -366,19 +391,35 @@ window.addEventListener('message', (event) => {
  */
 function drawModels(p) {
   const models = p.models || [];
+  modelMenu.textContent = '';
   if (models.length === 0) {
     modelSelect.hidden = true;
+    hidePanel(modelMenu);
     return;
   }
-  const esc = (v) => String(v ?? '').replace(/[&<>"]/g, (c) =>
-    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   // The empty option is the configured default, which is where a session
   // starts and where it goes back to when Settings changes.
-  modelSelect.innerHTML =
-    '<option value="">' + esc(t('modelFromSettings')) + '</option>' +
-    models.map((m) => '<option value="' + esc(m.id) + '">' + esc(m.label || m.id) +
-      '</option>').join('');
   modelSelect.value = p.current || '';
+  const choices = [{ id: '', label: t('modelFromSettings', 'Model from Settings') }, ...models];
+  modelLabel.textContent = choices.find(model => model.id === modelSelect.value)?.label || modelSelect.value;
+  for (const model of choices) {
+    const option = document.createElement('button');
+    option.type = 'button';
+    option.className = 'model-option';
+    option.value = model.id;
+    option.textContent = model.label || model.id;
+    option.setAttribute('role', 'menuitemradio');
+    option.setAttribute('aria-checked', String(model.id === modelSelect.value));
+    option.addEventListener('click', () => {
+      modelSelect.value = model.id;
+      modelLabel.textContent = option.textContent;
+      for (const item of modelMenu.querySelectorAll('button')) item.setAttribute('aria-checked', String(item === option));
+      post({ type: 'setModel', model: model.id });
+      hidePanel(modelMenu);
+      modelSelect.focus();
+    });
+    modelMenu.appendChild(option);
+  }
   modelSelect.hidden = false;
 }
 
@@ -395,7 +436,7 @@ function drawPreview(p) {
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
   if (lines.length === 0) {
-    previewPanel.innerHTML = '<p>' + esc(t('previewEmpty')) + '</p>';
+    previewContent.innerHTML = '<p>' + esc(t('previewEmpty')) + '</p>';
     positionPanel(previewPanel, previewBtn);
     return;
   }
@@ -405,20 +446,21 @@ function drawPreview(p) {
     esc(l.tier) + '</td><td class="num">' + (l.estimatedTokens || 0).toLocaleString() +
     '</td><td>' + esc(t(l.kept ? 'previewKept' : 'previewDropped')) + '</td></tr>').join('');
 
-  previewPanel.innerHTML =
+  previewContent.innerHTML =
     '<p>' + esc(t('previewHint')) + '</p>' +
+    '<div class="preview-totals"><span>' + esc(t('previewTotal')) + ' ' +
+    (p.estimatedTokens || 0).toLocaleString() + ' / ' +
+    (p.tokenBudget || 0).toLocaleString() + '</span>' +
+    '<span>' + esc(t('previewReservedOutput')) + ' ' + (p.outputTokenReserve || 0).toLocaleString() + '</span></div>' +
     '<table><thead><tr>' +
     '<th>' + esc(t('previewBlock')) + '</th>' +
     '<th>' + esc(t('previewTier')) + '</th>' +
     '<th>' + esc(t('previewTokens')) + '</th>' +
     '<th></th></tr></thead><tbody>' + rows + '</tbody></table>' +
-    '<p>' + esc(t('previewTotal')) + ' ' +
-    (p.estimatedTokens || 0).toLocaleString() + ' / ' +
-    (p.tokenBudget || 0).toLocaleString() + '</p>' +
-    '<p>' + esc(t('previewReservedOutput')) + ' ' + (p.outputTokenReserve || 0).toLocaleString() + '</p>' +
     (p.dropped && p.dropped.length ? '<p>' + esc(p.dropped.join(', ')) + '</p>' : '') +
     (p.unavailableCount ? '<p>' + esc(tf('contextExcluded', '', p.unavailableCount)) + '</p>' : '') +
-    '<pre>' + esc(p.text) + '</pre>';
+    '<details class="prompt-details"><summary>' + esc(t('previewPrompt', 'Full prompt')) + '</summary><pre>' + esc(p.text) + '</pre></details>';
+  previewContent.querySelector('details')?.addEventListener('toggle', () => positionPanel(previewPanel, previewBtn));
   positionPanel(previewPanel, previewBtn);
 }
 
@@ -426,7 +468,30 @@ function ticked() {
   return Array.from(contextEl.querySelectorAll('input:checked')).map((b) => b.value);
 }
 
-modelSelect.onchange = () => post({ type: 'setModel', model: modelSelect.value });
+function openModelMenu() {
+  showPanel(modelMenu, modelSelect);
+  const choices = Array.from(modelMenu.querySelectorAll('button'));
+  (choices.find(option => option.value === modelSelect.value) || choices[0])?.focus();
+}
+modelSelect.addEventListener('click', () => {
+  if (!modelMenu.hidden) hidePanel(modelMenu);
+  else openModelMenu();
+});
+modelSelect.addEventListener('keydown', (event) => {
+  if (!['ArrowDown', 'ArrowUp'].includes(event.key)) return;
+  event.preventDefault();
+  openModelMenu();
+  if (event.key === 'ArrowUp') Array.from(modelMenu.querySelectorAll('button')).at(-1)?.focus();
+});
+modelMenu.addEventListener('keydown', (event) => {
+  const choices = Array.from(modelMenu.querySelectorAll('button'));
+  if (!choices.length || !['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+  event.preventDefault();
+  const current = choices.indexOf(document.activeElement);
+  const next = event.key === 'Home' ? 0 : event.key === 'End' ? choices.length - 1
+    : (current + (event.key === 'ArrowDown' ? 1 : -1) + choices.length) % choices.length;
+  choices[next].focus();
+});
 
 previewBtn.onclick = () => {
   // A second press closes it: the preview is a thing to glance at, not a mode.
@@ -434,7 +499,7 @@ previewBtn.onclick = () => {
     hidePanel(previewPanel);
     return;
   }
-  previewPanel.textContent = t('previewLoading', 'Loading preview…');
+  previewContent.textContent = t('previewLoading', 'Loading preview…');
   showPanel(previewPanel, previewBtn);
   post({ type: 'preview', requestId: ++previewRequestId, text: inputEl.value.trim(), include: ticked() });
 };

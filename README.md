@@ -50,6 +50,8 @@ A chat panel opens in the right sidebar for brainstorming, character consistency
 
 **Context** and **Preview** open as non-modal popovers anchored to their buttons. They float over the conversation without resizing it. Click outside, press Escape, or press the same button again to dismiss one. Context selections remain checked after dismissal; opening another popover closes the first.
 
+Preview starts with its context breakdown; expand **Full prompt** to inspect the assembled request. Its close button stays available while scrolling. The model picker uses the same themed popover controls and supports arrow-key navigation and Enter to select a model. Extension scrollbars follow the host theme.
+
 The top of the **Context** popup also exposes **Context budget** and **Context Length**, with the effective input allowance and reserved answer tokens. **Apply budgets** saves the same values as the extension settings page, so later chat requests and restarts use them. The context budget currently governs AI Chat and Preview. Context Length additionally controls LM Studio model loading for other AI tools. The answer reserve is calculated automatically rather than configured separately.
 
 - Streaming responses with live preview while the AI generates its answer.

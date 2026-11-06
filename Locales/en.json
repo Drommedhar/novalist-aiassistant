@@ -94,6 +94,7 @@
     "previewTotal": "Estimated total:",
     "previewEmpty": "Nothing is ticked, so only what you type would be sent.",
     "previewClose": "Close",
+    "previewPrompt": "Full prompt",
     "modelLabel": "Model",
     "modelFromSettings": "Model from Settings"
   },

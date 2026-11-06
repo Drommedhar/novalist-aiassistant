@@ -5,6 +5,7 @@ const { test } = require('node:test');
 const vm = require('node:vm');
 
 function page() {
+  let activeElement = null;
   class Element {
     constructor() {
       this.children = [];
@@ -25,6 +26,8 @@ function page() {
     remove() { if (this.parent) this.parent.children = this.parent.children.filter(child => child !== this); }
     addEventListener(name, handler) { this.events.set(name, handler); }
     setAttribute(name, value) { this.attributes.set(name, value); }
+    focus() { activeElement = this; }
+    querySelector(selector) { return this.querySelectorAll(selector)[0] ?? null; }
     reportValidity() { return true; }
     getBoundingClientRect() { return { left: 10, top: 700, bottom: 750 }; }
     get offsetHeight() { return Math.min(200, Number.parseFloat(this.style.maxHeight) || 200); }
@@ -51,6 +54,8 @@ function page() {
   };
   element('context').hidden = true;
   element('previewPanel').hidden = true;
+  element('modelMenu').hidden = true;
+  element('previewPanel').appendChild(element('previewContent'));
   element('context').appendChild(element('contextOptions'));
   const posts = [];
   const frames = new Map();
@@ -59,6 +64,7 @@ function page() {
   const context = vm.createContext({
     document: {
       documentElement: { clientWidth: 1200, clientHeight: 800 },
+      get activeElement() { return activeElement; },
       getElementById: element,
       querySelectorAll: () => [],
       createElement: () => new Element(),
@@ -115,7 +121,7 @@ test('rejected or cancelled context reads allow retry without losing the draft',
 
 test('conversation reset discards old stream, preview, context and pending draft', () => {
   const chat = page();
-  chat.element('previewPanel').textContent = 'old private preview';
+  chat.element('previewContent').textContent = 'old private preview';
   chat.element('previewPanel').hidden = false;
   chat.element('contextOptions').textContent = 'old context';
   chat.element('input').value = 'old draft';
@@ -123,7 +129,7 @@ test('conversation reset discards old stream, preview, context and pending draft
   chat.message({ type: 'history', reset: true, messages: [] });
   chat.flush();
   assert.equal(chat.element('messages').textContent, '');
-  assert.equal(chat.element('previewPanel').textContent, '');
+  assert.equal(chat.element('previewContent').textContent, '');
   assert.equal(chat.element('previewPanel').hidden, true);
   assert.equal(chat.element('contextOptions').textContent, '');
   assert.equal(chat.element('input').value, '');
@@ -231,9 +237,9 @@ test('Preview replaces Context and late replies cannot reopen a dismissed popove
   assert.equal(chat.element('previewPanel').hidden, true);
   chat.element('preview').onclick();
   chat.message({ type: 'preview', requestId, lines: [], text: 'old preview' });
-  assert.equal(chat.element('previewPanel').textContent, 'Loading preview…');
+  assert.equal(chat.element('previewContent').textContent, 'Loading preview…');
   chat.message({ type: 'preview', requestId: chat.posts.at(-1).requestId, lines: [] });
-  assert.equal(chat.element('previewPanel').innerHTML, '<p></p>');
+  assert.equal(chat.element('previewContent').innerHTML, '<p></p>');
 });
 
 test('chat budget controls submit shared settings and show the confirmed allowance', () => {
@@ -252,4 +258,21 @@ test('chat budget controls submit shared settings and show the confirmed allowan
   chat.message({ type: 'budgetsRejected', error: 'Cannot save settings' });
   assert.equal(chat.element('applyBudgets').disabled, false);
   assert.equal(chat.element('budgetSummary').textContent, 'Cannot save settings');
+});
+
+test('the model popover supports keyboard navigation, selection, and the settings default', () => {
+  const chat = page();
+  chat.message({ type: 'models', current: 'sonnet', models: [{ id: 'sonnet', label: 'Claude Sonnet' }, { id: 'opus', label: 'Claude Opus' }] });
+  assert.equal(chat.element('modelLabel').textContent, 'Claude Sonnet');
+  chat.element('model').events.get('click')();
+  const menu = chat.element('modelMenu');
+  assert.equal(menu.popoverOpen, true);
+  menu.events.get('keydown')({ key: 'ArrowDown', preventDefault() {} });
+  menu.children[2].events.get('click')();
+  assert.deepEqual(chat.posts.at(-1), { type: 'setModel', model: 'opus' });
+  assert.equal(chat.element('modelLabel').textContent, 'Claude Opus');
+  assert.equal(menu.hidden, true);
+  menu.children[0].events.get('click')();
+  assert.deepEqual(chat.posts.at(-1), { type: 'setModel', model: '' });
+  assert.equal(menu.children[0].attributes.get('aria-checked'), 'true');
 });

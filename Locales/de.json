@@ -94,6 +94,7 @@
     "previewTotal": "Geschätzt insgesamt:",
     "previewEmpty": "Nichts ausgewählt - gesendet würde nur, was du tippst.",
     "previewClose": "Schließen",
+    "previewPrompt": "Vollständiger Prompt",
     "modelLabel": "Modell",
     "modelFromSettings": "Modell aus den Einstellungen"
   },

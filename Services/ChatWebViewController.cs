@@ -154,6 +154,7 @@ public sealed partial class ChatWebViewController : IWebViewController, IDisposa
         ["previewReservedOutput"] = _loc.T("ai.previewReservedOutput"),
         ["previewEmpty"] = _loc.T("ai.previewEmpty"),
         ["previewClose"] = _loc.T("ai.previewClose"),
+        ["previewPrompt"] = _loc.T("ai.previewPrompt"),
         ["contextExcluded"] = _loc.T("ai.contextExcluded")
     };
 
