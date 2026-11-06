@@ -39,9 +39,11 @@ public partial class AiChatViewModel : ObservableObject, IDisposable
 
     internal ChatRequestPlan Preview(string text, IReadOnlyList<ContextBlock> context)
         => ChatRequestAssembler.Build(BuildSystemPrompt(), _conversationHistory, text, context,
-            _extension.Settings.ContextLength > 0
-                ? Math.Min(_extension.ContextEngine.TokenBudget, _extension.Settings.ContextLength)
-                : _extension.ContextEngine.TokenBudget);
+            EffectiveContextBudget);
+
+    internal int EffectiveContextBudget => _extension.Settings.ContextLength > 0
+        ? Math.Min(_extension.ContextEngine.TokenBudget, _extension.Settings.ContextLength)
+        : _extension.ContextEngine.TokenBudget;
 
     private readonly List<AiChatMessage> _conversationHistory = [];
     private CancellationTokenSource? _cts;

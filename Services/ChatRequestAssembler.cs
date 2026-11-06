@@ -10,8 +10,8 @@ internal static class ChatRequestAssembler
     public static ChatRequestPlan Build(string system, IReadOnlyList<AiChatMessage> history,
         string text, IReadOnlyList<ContextBlock> context, int tokenBudget)
     {
-        var reserve = Math.Clamp(tokenBudget / 4, 128, 2048);
-        var inputBudget = Math.Max(1, (int)(tokenBudget * 0.85) - reserve);
+        var reserve = OutputReserve(tokenBudget);
+        var inputBudget = InputBudget(tokenBudget);
         context = context.Where(block => !string.IsNullOrWhiteSpace(block.Body)).ToList();
         var required = context.Where(block => block.Tier <= ContextTier.Subject).ToList();
         var optional = context.Where(block => block.Tier > ContextTier.Subject)
@@ -63,6 +63,8 @@ internal static class ChatRequestAssembler
             new() { Role = "user", Content = assembled.Length == 0 ? text : assembled + "\n\n" + text }];
     }
 
+    internal static int OutputReserve(int tokenBudget) => Math.Clamp(tokenBudget / 4, 128, 2048);
+    internal static int InputBudget(int tokenBudget) => Math.Max(1, (int)(tokenBudget * 0.85) - OutputReserve(tokenBudget));
     private static int Tokens(string text) => (int)Math.Ceiling(text.Length / 4.0);
     private static int Estimate(IEnumerable<AiChatMessage> messages)
         => 3 + messages.Sum(message => Tokens(message.Content) + 8);

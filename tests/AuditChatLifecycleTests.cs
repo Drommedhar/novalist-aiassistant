@@ -9,6 +9,58 @@ namespace Novalist.Extensions.AiAssistant.Tests;
 
 public sealed class AuditChatLifecycleTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task PreviewRepliesRetainThePopoverRequestId(bool reject)
+    {
+        using var fixture = new ChatFixture { ContextError = reject ? new IOException("Cannot read context") : null };
+        using var controller = new ChatWebViewController(fixture.Host, fixture.Extension);
+        var reply = await controller.OnMessageAsync("""{"type":"preview","requestId":42,"include":["entity:allowed"]}""");
+        Assert.NotNull(reply);
+        using var document = JsonDocument.Parse(reply);
+        Assert.Equal(42, document.RootElement.GetProperty("requestId").GetInt32());
+        Assert.Equal(reject ? "previewRejected" : "preview", document.RootElement.GetProperty("type").GetString());
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ExplicitSelectionIncludesUnmentionedEntriesWithoutRequiringAnOpenScene(bool sceneOpen)
+    {
+        using var fixture = new ChatFixture { FilterBySceneMentions = true, SceneOpen = sceneOpen };
+        using var controller = new ChatWebViewController(fixture.Host, fixture.Extension);
+        var preview = await controller.OnMessageAsync("""{"type":"preview","include":["entity:allowed"]}""");
+        Assert.Contains("allowed-section", preview);
+        await controller.OnMessageAsync("""{"type":"send","text":"Hello","include":["entity:allowed"]}""");
+        await fixture.RequestReceived.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        Assert.Contains("allowed-section", fixture.Requests.Single());
+    }
+
+    [Fact]
+    public async Task SectionlessSelectedEntryRemainsVisibleInPreview()
+    {
+        using var fixture = new ChatFixture { ContextEntries = [new() { Id = "allowed", TypeKey = "character", Name = "Rose" }] };
+        using var controller = new ChatWebViewController(fixture.Host, fixture.Extension);
+        var preview = await controller.OnMessageAsync("""{"type":"preview","include":["entity:allowed"]}""");
+        Assert.Contains("character: Rose", preview);
+    }
+
+    [Theory]
+    [InlineData("preview", "previewRejected")]
+    [InlineData("send", "sendRejected")]
+    public async Task UnavailableSelectionReturnsAnErrorInsteadOfAnEmptyRequest(string operation, string rejection)
+    {
+        using var fixture = new ChatFixture { ContextEntries = [] };
+        using var controller = new ChatWebViewController(fixture.Host, fixture.Extension);
+        var reply = await controller.OnMessageAsync(JsonSerializer.Serialize(new { type = operation, text = "Hello", include = new[] { "entity:allowed" } }));
+        Assert.NotNull(reply);
+        using var document = JsonDocument.Parse(reply);
+        Assert.Equal(rejection, document.RootElement.GetProperty("type").GetString());
+        Assert.Equal("ai.contextUnavailable", document.RootElement.GetProperty("error").GetString());
+        Assert.Empty(fixture.Requests);
+    }
+
     [Fact]
     public async Task EmptyPickerDoesNotReadOrSendTheProjectRoster()
     {
@@ -24,13 +76,18 @@ public sealed class AuditChatLifecycleTests
     {
         using var fixture = new ChatFixture();
         using var controller = new ChatWebViewController(fixture.Host, fixture.Extension);
+        var notices = new List<string>();
+        controller.MessagePosted += notices.Add;
         var preview = await controller.OnMessageAsync("""{"type":"preview","include":["entity:allowed","entity:private-entity"]}""");
         Assert.Contains("allowed-section", preview);
         Assert.DoesNotContain("private-entity", preview);
+        using var document = JsonDocument.Parse(preview!);
+        Assert.Equal(1, document.RootElement.GetProperty("unavailableCount").GetInt32());
         await controller.OnMessageAsync("""{"type":"send","text":"Hello","include":["entity:allowed","entity:private-entity"]}""");
         await fixture.RequestReceived.Task.WaitAsync(TimeSpan.FromSeconds(3));
         Assert.Contains("allowed-section", fixture.Requests.Single());
         Assert.DoesNotContain("private-entity", fixture.Requests.Single());
+        Assert.Contains(notices, notice => notice.Contains("ai.contextExcluded"));
     }
 
     [Fact]
@@ -250,6 +307,8 @@ public sealed class AuditChatLifecycleTests
         public bool HoldResponse { get; set; }
         public bool HoldContext { get; set; }
         public bool QueueUi { get; set; }
+        public bool FilterBySceneMentions { get; set; }
+        public bool SceneOpen { get; set; } = true;
         public Exception? ContextError { get; set; }
         public Queue<Action> PendingUi { get; } = new();
         public IReadOnlyList<IAiHook> Hooks { get; set; } = [];
@@ -275,12 +334,12 @@ public sealed class AuditChatLifecycleTests
             });
             var project = ServiceProxy.Create<IExtensionProjectService>((method, _) => method.Name switch
             {
-                "get_CurrentScene" => new SceneInfo { Id = "scene", ChapterGuid = "chapter" },
+                "get_CurrentScene" => SceneOpen ? new SceneInfo { Id = "scene", ChapterGuid = "chapter" } : null,
                 _ => throw new InvalidOperationException(method.Name)
             });
-            var entities = ServiceProxy.Create<IExtensionEntityService>((method, _) => method.Name switch
+            var entities = ServiceProxy.Create<IExtensionEntityService>((method, args) => method.Name switch
             {
-                "GetAiContextAsync" => ReadContextAsync(),
+                "GetAiContextAsync" => ReadContextAsync(args),
                 "LoadCharactersAsync" => Task.FromResult<IReadOnlyList<CharacterInfo>>([new() { Id = "allowed", DisplayName = "Allowed" }]),
                 "LoadLocationsAsync" => Task.FromResult<IReadOnlyList<LocationInfo>>([new() { Id = "harbor", Name = "Harbor" }]),
                 "LoadItemsAsync" => Task.FromResult<IReadOnlyList<ItemInfo>>([new() { Id = "key", Name = "Key" }]),
@@ -315,12 +374,12 @@ public sealed class AuditChatLifecycleTests
         {
             while (PendingUi.TryDequeue(out var action)) action();
         }
-        private async Task<IReadOnlyList<AiContextEntryInfo>> ReadContextAsync()
+        private async Task<IReadOnlyList<AiContextEntryInfo>> ReadContextAsync(object?[] args)
         {
             if (ContextError != null) throw ContextError;
             ContextRequested.TrySetResult();
             if (HoldContext) await ContextReleased.Task;
-            return ContextEntries;
+            return FilterBySceneMentions && !string.IsNullOrEmpty((string?)args[1]) ? [] : ContextEntries;
         }
         public void Dispose() => _http.Dispose();
     }

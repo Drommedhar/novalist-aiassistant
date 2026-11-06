@@ -14,7 +14,7 @@ namespace Novalist.Extensions.AiAssistant.Services;
 /// <summary>
 /// Reads selected context and forwards chat state to the extension webview.
 /// </summary>
-public sealed class ChatWebViewController : IWebViewController, IDisposable
+public sealed partial class ChatWebViewController : IWebViewController, IDisposable
 {
     private static readonly JsonSerializerOptions Json =
         new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
@@ -56,6 +56,7 @@ public sealed class ChatWebViewController : IWebViewController, IDisposable
                 case "preview": return await PreviewAsync(root, generation);
                 case "models": return await ModelsAsync(generation);
                 case "contextOptions": return await ContextOptionsAsync(generation);
+                case "setBudgets": return await SetBudgetsAsync(root, generation);
                 case "setModel":
                     _extension.AiService.ModelOverride = Text(root, "model");
                     return null;
@@ -80,8 +81,12 @@ public sealed class ChatWebViewController : IWebViewController, IDisposable
             return JsonSerializer.Serialize(new
             {
                 type = type == "send" ? "sendRejected" : "previewRejected",
-                text = Text(root, "text"), error = error.Message
+                text = Text(root, "text"), error = error.Message, requestId = RequestId(root)
             }, Json);
+        }
+        catch (Exception error) when (type == "setBudgets" && (error is IOException or UnauthorizedAccessException or ArgumentException))
+        {
+            return JsonSerializer.Serialize(new { type = "budgetsRejected", error = error.Message }, Json);
         }
     }
 
@@ -90,7 +95,7 @@ public sealed class ChatWebViewController : IWebViewController, IDisposable
         var text = Text(message, "text").Trim();
         if (_vm.IsGenerating || text.Length == 0)
             return JsonSerializer.Serialize(new { type = "sendRejected", text }, Json);
-        var blocks = await ContextBlocksAsync(message, generation);
+        var (blocks, unavailable) = await ContextBlocksAsync(message, generation);
         RequireCurrent(generation);
         if (_vm.IsGenerating)
             return JsonSerializer.Serialize(new { type = "sendRejected", text }, Json);
@@ -108,6 +113,12 @@ public sealed class ChatWebViewController : IWebViewController, IDisposable
                 text = _loc.T("context.dropped").Replace("{0}", string.Join(", ", request.Dropped))
             }, Json));
         RequireCurrent(generation);
+        if (unavailable > 0)
+            MessagePosted?.Invoke(JsonSerializer.Serialize(new
+            {
+                type = "notice", text = _loc.T("ai.contextExcluded").Replace("{0}", unavailable.ToString())
+            }, Json));
+        RequireCurrent(generation);
         _vm.UserInput = text;
         _ = _vm.SendPreparedAsync(text, request);
         return JsonSerializer.Serialize(new { type = "sendAccepted" }, Json);
@@ -115,16 +126,16 @@ public sealed class ChatWebViewController : IWebViewController, IDisposable
 
     private async Task<string?> PreviewAsync(JsonElement message, int generation)
     {
-        var blocks = await ContextBlocksAsync(message, generation);
+        var (blocks, unavailable) = await ContextBlocksAsync(message, generation);
         RequireCurrent(generation);
         var request = _vm.Preview(Text(message, "text"), blocks);
         RequireCurrent(generation);
         var preview = request.Preview;
         return JsonSerializer.Serialize(new
         {
-            type = "preview", text = preview.Text, estimatedTokens = preview.EstimatedTokens,
+            type = "preview", requestId = RequestId(message), text = preview.Text, estimatedTokens = preview.EstimatedTokens,
             tokenBudget = preview.TokenBudget, outputTokenReserve = request.OutputTokenReserve,
-            dropped = request.Dropped, lines = preview.Lines,
+            dropped = request.Dropped, lines = preview.Lines, unavailableCount = unavailable,
             strings = PreviewStrings()
         }, Json);
     }
@@ -132,6 +143,7 @@ public sealed class ChatWebViewController : IWebViewController, IDisposable
     private Dictionary<string, string> PreviewStrings() => new()
     {
         ["previewTitle"] = _loc.T("ai.previewTitle"),
+        ["previewLoading"] = _loc.T("ai.previewLoading"),
         ["previewHint"] = _loc.T("ai.previewHint"),
         ["previewBlock"] = _loc.T("ai.previewBlock"),
         ["previewTier"] = _loc.T("ai.previewTier"),
@@ -141,7 +153,8 @@ public sealed class ChatWebViewController : IWebViewController, IDisposable
         ["previewTotal"] = _loc.T("ai.previewTotal"),
         ["previewReservedOutput"] = _loc.T("ai.previewReservedOutput"),
         ["previewEmpty"] = _loc.T("ai.previewEmpty"),
-        ["previewClose"] = _loc.T("ai.previewClose")
+        ["previewClose"] = _loc.T("ai.previewClose"),
+        ["contextExcluded"] = _loc.T("ai.contextExcluded")
     };
 
     private async Task<string?> ModelsAsync(int generation)
@@ -163,6 +176,7 @@ public sealed class ChatWebViewController : IWebViewController, IDisposable
     private string History() => JsonSerializer.Serialize(new
     {
         type = "history",
+        budgets = BudgetSnapshot(),
         isGenerating = _vm.IsGenerating,
         streamingResponse = _vm.StreamingResponse,
         streamingThinking = _vm.StreamingThinking,
@@ -171,6 +185,7 @@ public sealed class ChatWebViewController : IWebViewController, IDisposable
         strings = new Dictionary<string, string>
         {
             ["send"] = _loc.T("ai.send"), ["stop"] = _loc.T("ai.stop"),
+            ["previewLoading"] = _loc.T("ai.previewLoading"),
             ["clear"] = _loc.T("ai.clearChat"), ["placeholder"] = _loc.T("ai.chatPlaceholder")
         }
     }, Json);
@@ -205,7 +220,20 @@ public sealed class ChatWebViewController : IWebViewController, IDisposable
             RequireCurrent(generation);
             AddEntityGroup(groups, type.DisplayNamePlural, entries.Select(entry => (entry.Id, entry.Name)));
         }
-        return JsonSerializer.Serialize(new { type = "contextOptions", groups }, Json);
+        return JsonSerializer.Serialize(new
+        {
+            type = "contextOptions", groups, budgets = BudgetSnapshot(),
+            strings = new Dictionary<string, string>
+            {
+                ["contextAddAll"] = _loc.T("ai.contextAddAll"),
+                ["chatBudgetTitle"] = _loc.T("ai.chatBudgetTitle"),
+                ["chatBudgetContext"] = _loc.T("settings.aiContextBudget"),
+                ["chatBudgetLength"] = _loc.T("settings.aiContextLength"),
+                ["chatBudgetHelp"] = _loc.T("ai.chatBudgetHelp"),
+                ["chatBudgetApply"] = _loc.T("ai.chatBudgetApply"),
+                ["chatBudgetSummary"] = _loc.T("ai.chatBudgetSummary")
+            }
+        }, Json);
     }
 
     private static void AddEntityGroup(List<object> groups, string title, IEnumerable<(string Id, string Name)> entries)
@@ -215,14 +243,14 @@ public sealed class ChatWebViewController : IWebViewController, IDisposable
         if (items.Count > 0) groups.Add(new { title, items });
     }
 
-    private async Task<List<ContextBlock>> ContextBlocksAsync(JsonElement message, int generation)
+    private async Task<(List<ContextBlock> Blocks, int Unavailable)> ContextBlocksAsync(JsonElement message, int generation)
     {
         var blocks = new List<ContextBlock>();
         if (!message.TryGetProperty("include", out var include) || include.ValueKind != JsonValueKind.Array)
-            return blocks;
+            return (blocks, 0);
         var wanted = include.EnumerateArray().Where(element => element.ValueKind == JsonValueKind.String)
             .Select(element => element.GetString() ?? string.Empty).ToHashSet(StringComparer.Ordinal);
-        if (wanted.Count == 0) return blocks;
+        if (wanted.Count == 0) return (blocks, 0);
         var current = _host.ProjectService.CurrentScene;
         if (current != null && wanted.Contains("scene:" + current.Id))
         {
@@ -240,9 +268,13 @@ public sealed class ChatWebViewController : IWebViewController, IDisposable
             blocks.Add(new ContextBlock(ContextTier.Background, _loc.T("ai.contextOutline"), await ReadOutlineAsync(generation)));
         var entityIds = wanted.Where(id => id.StartsWith("entity:", StringComparison.Ordinal))
             .Select(id => id["entity:".Length..]).ToHashSet(StringComparer.Ordinal);
-        if (entityIds.Count > 0 && current != null)
-            blocks.AddRange(await ReadEntitiesAsync(current, entityIds, generation));
-        return blocks;
+        if (entityIds.Count > 0)
+        {
+            var (entities, unavailable) = await ReadEntitiesAsync(entityIds, generation);
+            blocks.AddRange(entities);
+            return (blocks, unavailable);
+        }
+        return (blocks, 0);
     }
 
     private async Task<string> ReadChapterAsync(SceneInfo current, int generation)
@@ -276,14 +308,18 @@ public sealed class ChatWebViewController : IWebViewController, IDisposable
         return builder.ToString();
     }
 
-    private async Task<List<ContextBlock>> ReadEntitiesAsync(SceneInfo current, HashSet<string> entityIds, int generation)
+    private async Task<(List<ContextBlock> Blocks, int Unavailable)> ReadEntitiesAsync(HashSet<string> entityIds, int generation)
     {
-        var allowed = await _host.EntityService.GetAiContextAsync(current.ChapterGuid, current.Id);
+        var allowed = await _host.EntityService.GetAiContextAsync(string.Empty, string.Empty);
         RequireCurrent(generation);
+        var selected = allowed.Where(entry => entityIds.Contains(entry.Id)).ToList();
+        if (selected.Count == 0)
+            throw new InvalidOperationException(_loc.T("ai.contextUnavailable"));
         var blocks = new List<ContextBlock>();
-        foreach (var entry in allowed.Where(entry => entityIds.Contains(entry.Id)))
+        foreach (var entry in selected)
         {
             var builder = new StringBuilder();
+            builder.Append(entry.TypeKey).Append(": ").AppendLine(entry.Name);
             foreach (var section in entry.Sections)
             {
                 if (!string.IsNullOrWhiteSpace(section.Content))
@@ -291,12 +327,16 @@ public sealed class ChatWebViewController : IWebViewController, IDisposable
             }
             blocks.Add(new ContextBlock(ContextTier.Entities, entry.Name, builder.ToString(), 100));
         }
-        return blocks;
+        return (blocks, entityIds.Count - selected.Count);
     }
 
     private static string Text(JsonElement message, string property)
         => message.TryGetProperty(property, out var value) && value.ValueKind == JsonValueKind.String
             ? value.GetString() ?? string.Empty : string.Empty;
+
+    private static int RequestId(JsonElement message)
+        => message.TryGetProperty("requestId", out var value) && value.ValueKind == JsonValueKind.Number
+            && value.TryGetInt32(out var id) ? id : 0;
 
     private bool IsCurrent(int generation)
         => Volatile.Read(ref _disposed) == 0 && Volatile.Read(ref _generation) == generation;

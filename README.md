@@ -46,6 +46,12 @@ There is no session length limit. Clips are processed in order, and the pending 
 
 A chat panel opens in the right sidebar for brainstorming, character consistency checks and writing feedback. Choose which scene, chapter, outline or Codex entries to include with **Context**. The picker includes characters, locations, items, lore and registered custom types. It refreshes when reopened and keeps selections that are still available. An empty picker sends no automatic project roster. Selected entries follow the host's AI exclusions for entries and sections.
 
+**Add all** checks every available option in the picker. Explicitly selected Codex entries do not need to be mentioned in the open scene, and selection also works without an open scene. Preview reports entries that the host excludes or cannot find. If none of the selected entries are available, the request is rejected rather than silently sent without them. This requires the matching Novalist host update that supports explicit picker context; updating this extension alone on an older host does not enable it.
+
+**Context** and **Preview** open as non-modal popovers anchored to their buttons. They float over the conversation without resizing it. Click outside, press Escape, or press the same button again to dismiss one. Context selections remain checked after dismissal; opening another popover closes the first.
+
+The top of the **Context** popup also exposes **Context budget** and **Context Length**, with the effective input allowance and reserved answer tokens. **Apply budgets** saves the same values as the extension settings page, so later chat requests and restarts use them. The context budget currently governs AI Chat and Preview. Context Length additionally controls LM Studio model loading for other AI tools. The answer reserve is calculated automatically rather than configured separately.
+
 - Streaming responses with live preview while the AI generates its answer.
 - Recent conversation turns fit within the configured context budget together with the system instructions, selected context and current message. Preview shows the complete assembled request, estimated input size, reserved output space and omitted context or older turns. Counts are estimates, not provider tokenizer measurements.
 - Support for models with a thinking/reasoning step (the thinking output is displayed in a collapsible section).
