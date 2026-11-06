@@ -252,7 +252,7 @@ Pull requests run these checks. Release packaging depends on their success and u
 
 ## Requirements
 
-- Novalist **3.6.0** or later; the build contract targets SDK **15.0.0** and .NET 10. CI and release builds use the host's `v3.6.0` tag, so publish that host release before releasing this extension. Earlier hosts can continue using older compatible extension releases.
+- Novalist **3.7.0** or later; the build contract targets SDK **15.1.0** and .NET 10. CI and release builds use the host's `v3.7.0` tag, so publish that host release before releasing this extension. Earlier hosts can continue using older compatible extension releases.
 
 ## License
 

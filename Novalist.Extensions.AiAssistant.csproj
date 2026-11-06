@@ -20,7 +20,7 @@
     <ProjectReference Include="..\novalist-official\Novalist.Sdk\Novalist.Sdk.csproj" />
   </ItemGroup>
   <ItemGroup Condition="'$(UseLocalSdk)' == 'false'">
-    <PackageReference Include="Novalist.Sdk" Version="[15.0.0]" />
+    <PackageReference Include="Novalist.Sdk" Version="[15.1.0]" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.0" />
