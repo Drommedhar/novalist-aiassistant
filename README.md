@@ -159,7 +159,9 @@ Each prompt says where its answer goes (replace the selection, insert after it, 
 
 One place decides what goes into a request, in what order, and what gets cut when it does not fit. The order is not stylistic — models attend most reliably to the start and end of a long context, so the instruction leads and the passage being worked on comes last, with background in the middle where inattention costs least.
 
-When there is not room, the least important thing is dropped rather than whatever happened to be at the bottom, and you are told what went. The budget is set in **Settings → AI / LLM**.
+When there is not room, the least important thing is dropped rather than whatever happened to be at the bottom, and you are told what went. The budget is set in **Settings → Extensions → AI Assistant**.
+
+Under **Generation Parameters → Context budget (tokens)**, set the total chat budget to match your model's context window. The setting accepts 500–2,000,000 tokens and persists across restarts. Chat leaves 15% headroom for estimation error and reserves up to 2,048 tokens for the answer; Preview shows the remaining input allowance. A nonzero **Context Length** is an additional upper bound. Set it to **0** to use the context budget without that extra bound. Increasing this budget does not increase the model's actual capacity.
 
 **Preview** in the chat shows exactly what would be sent, before a token is spent on it: every block that would go, what kind it is, roughly how many tokens it costs, and whether it fitted — with the assembled prompt itself underneath. The prompt used to be built and sent in one step and nothing showed what went, so ticking six characters and getting an answer that ignored two had no explanation.
 

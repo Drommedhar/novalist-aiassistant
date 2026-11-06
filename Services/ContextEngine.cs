@@ -90,6 +90,8 @@ public sealed class ContextEngine
     /// </summary>
     private const double Headroom = 0.85;
 
+    public const int MinimumTokenBudget = 500;
+    public const int MaximumTokenBudget = 2_000_000;
     public int TokenBudget { get; set; } = 8000;
 
     /// <summary>
@@ -243,7 +245,7 @@ public sealed class ContextEngine
             var stored = JsonSerializer.Deserialize<Stored>(
                 json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
             if (stored is { TokenBudget: > 0 })
-                engine.TokenBudget = Math.Clamp(stored.TokenBudget, 500, 200000);
+                engine.TokenBudget = Math.Clamp(stored.TokenBudget, MinimumTokenBudget, MaximumTokenBudget);
         }
         catch (JsonException)
         {

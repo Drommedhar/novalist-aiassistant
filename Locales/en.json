@@ -251,6 +251,8 @@
     "aiConnected": "✓ Connected",
     "aiConnection": "Connection",
     "aiContextLength": "Context Length (0 = default)",
+    "aiContextBudget": "Context budget (tokens)",
+    "aiContextBudgetHelp": "Total token budget for chat, including instructions, selected context, conversation and the answer. Set this to fit your model's context window (500–2,000,000). Chat leaves 15% headroom and reserves up to 2,048 tokens for the answer. A nonzero Context Length also limits the budget; use 0 to leave that extra limit unset. Token counts are estimates.",
     "aiCopilotModel": "Model",
     "aiCopilotModelPlaceholder": "e.g. gpt-4o (empty = default)",
     "aiCopilotPath": "Copilot CLI Path",
