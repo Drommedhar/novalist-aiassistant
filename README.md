@@ -44,13 +44,21 @@ There is no session length limit. Clips are processed in order, and the pending 
 
 ### AI Chat
 
-A chat panel opens in the right sidebar for brainstorming, character consistency checks and writing feedback. Choose which scene, chapter, outline or characters to include with **Context**. An empty picker sends no automatic project roster. Selected characters follow the host's AI exclusions for entries and sections.
+A chat panel opens in the right sidebar for brainstorming, character consistency checks and writing feedback. Choose which scene, chapter, outline or Codex entries to include with **Context**. The picker includes characters, locations, items, lore and registered custom types. It refreshes when reopened and keeps selections that are still available. An empty picker sends no automatic project roster. Selected entries follow the host's AI exclusions for entries and sections.
+
+**Add all** checks every available option in the picker. Explicitly selected Codex entries do not need to be mentioned in the open scene, and selection also works without an open scene. Preview reports entries that the host excludes or cannot find. If none of the selected entries are available, the request is rejected rather than silently sent without them. This requires the matching Novalist host update that supports explicit picker context; updating this extension alone on an older host does not enable it.
+
+**Context** and **Preview** open as non-modal popovers anchored to their buttons. They float over the conversation without resizing it. Click outside, press Escape, or press the same button again to dismiss one. Context selections remain checked after dismissal; opening another popover closes the first.
+
+Preview starts with its context breakdown; expand **Full prompt** to inspect the assembled request. Its close button stays available while scrolling. The model picker uses the same themed popover controls and supports arrow-key navigation and Enter to select a model. Extension scrollbars follow the host theme.
+
+The top of the **Context** popup also exposes **Context budget** and **Context Length**, with the effective input allowance and reserved answer tokens. **Apply budgets** saves the same values as the extension settings page, so later chat requests and restarts use them. The context budget currently governs AI Chat and Preview. Context Length additionally controls LM Studio model loading for other AI tools. The answer reserve is calculated automatically rather than configured separately.
 
 - Streaming responses with live preview while the AI generates its answer.
 - Recent conversation turns fit within the configured context budget together with the system instructions, selected context and current message. Preview shows the complete assembled request, estimated input size, reserved output space and omitted context or older turns. Counts are estimates, not provider tokenizer measurements.
 - Support for models with a thinking/reasoning step (the thinking output is displayed in a collapsible section).
 - Clearing chat cancels the current reply. Opening another project clears the old conversation and retires late responses.
-- A **Context** button that lets you say exactly what the model is told: this scene, the rest of the chapter, the outline, or particular characters. What you tick is what is sent — nothing is inferred, and if something had to be left out to fit the budget the panel says which.
+- A **Context** button that lets you say exactly what the model is told: this scene, the rest of the chapter, the outline, or particular Codex entries. Eligible selected content is sent without inferring additional entries, and if something had to be left out to fit the budget the panel says which.
 
 ### Editorial critique, in the margin
 
@@ -159,7 +167,9 @@ Each prompt says where its answer goes (replace the selection, insert after it, 
 
 One place decides what goes into a request, in what order, and what gets cut when it does not fit. The order is not stylistic — models attend most reliably to the start and end of a long context, so the instruction leads and the passage being worked on comes last, with background in the middle where inattention costs least.
 
-When there is not room, the least important thing is dropped rather than whatever happened to be at the bottom, and you are told what went. The budget is set in **Settings → AI / LLM**.
+When there is not room, the least important thing is dropped rather than whatever happened to be at the bottom, and you are told what went. The budget is set in **Settings → Extensions → AI Assistant**.
+
+Under **Generation Parameters → Context budget (tokens)**, set the total chat budget to match your model's context window. The setting accepts 500–2,000,000 tokens and persists across restarts. Chat leaves 15% headroom for estimation error and reserves up to 2,048 tokens for the answer; Preview shows the remaining input allowance. A nonzero **Context Length** is an additional upper bound. Set it to **0** to use the context budget without that extra bound. Increasing this budget does not increase the model's actual capacity.
 
 **Preview** in the chat shows exactly what would be sent, before a token is spent on it: every block that would go, what kind it is, roughly how many tokens it costs, and whether it fitted — with the assembled prompt itself underneath. The prompt used to be built and sent in one step and nothing showed what went, so ticking six characters and getting an answer that ignored two had no explanation.
 

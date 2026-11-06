@@ -80,7 +80,8 @@ jobs:
             Novalist.Extensions.AiAssistant.dll \
             extension.json \
             Locales/*.json \
-            web/*.html
+            web/*.html \
+            web/*.css
 
       # The store reads compatibility, the icon and the page from the release
       # when they are there, and falls back to the manifest at the repository

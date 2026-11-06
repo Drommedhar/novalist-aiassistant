@@ -700,6 +700,11 @@ public sealed class AiAssistantExtension : IExtension, IStatusBarContributor, IR
                 Action("refreshModels", _loc.T("settings.aiRefreshModels"), providerGroup, null, []),
                 Number("temperature", _loc.T("settings.aiTemperature"), Settings.Temperature, 0, 2, paramsGroup),
                 Number("contextLength", _loc.T("settings.aiContextLength"), Settings.ContextLength, 0, 131072, paramsGroup),
+                new SettingsField { Key = "contextBudget", Label = _loc.T("settings.aiContextBudget"),
+                    Type = SettingsFieldType.Number, Group = paramsGroup,
+                    Value = ContextEngine.TokenBudget.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    Min = ContextEngine.MinimumTokenBudget, Max = ContextEngine.MaximumTokenBudget,
+                    Help = _loc.T("settings.aiContextBudgetHelp") },
                 Number("topP", "Top P", Settings.TopP, 0, 1, paramsGroup),
                 Number("minP", "Min P", Settings.MinP, 0, 1, paramsGroup),
                 Number("frequencyPenalty", _loc.T("settings.aiFrequencyPenalty"), Settings.FrequencyPenalty, 0, 2, paramsGroup),
@@ -776,6 +781,13 @@ public sealed class AiAssistantExtension : IExtension, IStatusBarContributor, IR
                 .FirstOrDefault(p => p.Name == styleName)?.Id);
         }
 
+        if (values.ContainsKey("contextBudget"))
+        {
+            var budget = ReadInt("contextBudget", ContextEngine.TokenBudget,
+                ContextEngine.MinimumTokenBudget, ContextEngine.MaximumTokenBudget);
+            File.WriteAllText(ContextPath, new ContextEngine { TokenBudget = budget }.Serialise());
+            ContextEngine.TokenBudget = budget;
+        }
         SaveSettings();
         return Task.CompletedTask;
     }

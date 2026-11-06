@@ -5,6 +5,7 @@ const { test } = require('node:test');
 const vm = require('node:vm');
 
 function page() {
+  let activeElement = null;
   class Element {
     constructor() {
       this.children = [];
@@ -12,7 +13,11 @@ function page() {
       this.value = '';
       this.hidden = false;
       this.disabled = false;
+      this.checked = false;
       this._text = '';
+      this.style = {};
+      this.attributes = new Map();
+      this.popoverOpen = false;
     }
     set textContent(value) { this._text = value; this.children = []; }
     get textContent() { return this._text + this.children.map(child => child.textContent).join(''); }
@@ -20,8 +25,27 @@ function page() {
     appendChild(child) { child.parent = this; this.children.push(child); }
     remove() { if (this.parent) this.parent.children = this.parent.children.filter(child => child !== this); }
     addEventListener(name, handler) { this.events.set(name, handler); }
-    setAttribute() {}
-    querySelectorAll() { return []; }
+    setAttribute(name, value) { this.attributes.set(name, value); }
+    focus() { activeElement = this; }
+    querySelector(selector) { return this.querySelectorAll(selector)[0] ?? null; }
+    reportValidity() { return true; }
+    getBoundingClientRect() { return { left: 10, top: 700, bottom: 750 }; }
+    get offsetHeight() { return Math.min(200, Number.parseFloat(this.style.maxHeight) || 200); }
+    showPopover() {
+      this.popoverOpen = true;
+      this.events.get('toggle')?.({ newState: 'open' });
+    }
+    hidePopover() {
+      if (!this.popoverOpen) return;
+      this.popoverOpen = false;
+      this.events.get('toggle')?.({ newState: 'closed' });
+    }
+    querySelectorAll(selector) {
+      const descendants = this.children.flatMap(child => [child, ...child.querySelectorAll('*')]);
+      if (selector === 'input:checked') return descendants.filter(child => child.type === 'checkbox' && child.checked);
+      if (selector === 'input[type="checkbox"]') return descendants.filter(child => child.type === 'checkbox');
+      return descendants;
+    }
   }
   const elements = new Map();
   const element = id => {
@@ -29,12 +53,18 @@ function page() {
     return elements.get(id);
   };
   element('context').hidden = true;
+  element('previewPanel').hidden = true;
+  element('modelMenu').hidden = true;
+  element('previewPanel').appendChild(element('previewContent'));
+  element('context').appendChild(element('contextOptions'));
   const posts = [];
   const frames = new Map();
   let frameId = 0;
   let receive;
   const context = vm.createContext({
     document: {
+      documentElement: { clientWidth: 1200, clientHeight: 800 },
+      get activeElement() { return activeElement; },
       getElementById: element,
       querySelectorAll: () => [],
       createElement: () => new Element(),
@@ -91,17 +121,17 @@ test('rejected or cancelled context reads allow retry without losing the draft',
 
 test('conversation reset discards old stream, preview, context and pending draft', () => {
   const chat = page();
-  chat.element('previewPanel').textContent = 'old private preview';
+  chat.element('previewContent').textContent = 'old private preview';
   chat.element('previewPanel').hidden = false;
-  chat.element('context').textContent = 'old context';
+  chat.element('contextOptions').textContent = 'old context';
   chat.element('input').value = 'old draft';
   chat.message({ type: 'state', isGenerating: true, streamingDelta: 'old stream' });
   chat.message({ type: 'history', reset: true, messages: [] });
   chat.flush();
   assert.equal(chat.element('messages').textContent, '');
-  assert.equal(chat.element('previewPanel').textContent, '');
+  assert.equal(chat.element('previewContent').textContent, '');
   assert.equal(chat.element('previewPanel').hidden, true);
-  assert.equal(chat.element('context').textContent, '');
+  assert.equal(chat.element('contextOptions').textContent, '');
   assert.equal(chat.element('input').value, '');
   chat.message({ type: 'state', isGenerating: true, streamingDelta: 'new stream' });
   chat.flush();
@@ -123,4 +153,126 @@ test('hydration restores an active stream and terminal messages do not duplicate
   chat.flush();
   assert.equal(chat.element('messages').textContent, 'existing delta');
   assert.equal(chat.element('send').disabled, false);
+});
+
+test('reopening context refreshes scene options and keeps available selections for preview and send', () => {
+  const chat = page();
+  const toggle = () => chat.element('contextToggle').events.get('click')();
+  const options = scene => ({ type: 'contextOptions', groups: [{ title: 'Story', items: [
+    { id: 'scene:' + scene, label: scene }, { id: 'outline', label: 'Outline' },
+  ] }] });
+  toggle();
+  chat.message(options('one'));
+  for (const box of chat.element('context').querySelectorAll('input[type="checkbox"]')) {
+    box.checked = true;
+    box.events.get('change')();
+  }
+  toggle();
+  toggle();
+  assert.equal(chat.posts.filter(post => post.type === 'contextOptions').length, 2);
+  chat.message(options('two'));
+  assert.equal(chat.element('contextCount').textContent, '1');
+  chat.element('input').value = 'draft';
+  chat.element('previewPanel').hidden = true;
+  chat.element('preview').onclick();
+  assert.deepEqual(chat.posts.at(-1).include, ['outline']);
+  chat.send();
+  assert.deepEqual(chat.posts.at(-1).include, ['outline']);
+});
+
+test('context refresh with no options clears selected count', () => {
+  const chat = page();
+  chat.message({ type: 'contextOptions', groups: [{ title: 'Story', items: [{ id: 'outline', label: 'Outline' }] }] });
+  const box = chat.element('context').querySelectorAll('input[type="checkbox"]')[0];
+  box.checked = true;
+  box.events.get('change')();
+  assert.equal(chat.element('contextCount').textContent, '1');
+  chat.message({ type: 'contextOptions', groups: [] });
+  assert.equal(chat.element('contextCount').hidden, true);
+});
+
+test('Add all selects every context option for preview and send and survives refresh', () => {
+  const chat = page();
+  const options = { type: 'contextOptions', groups: [
+    { title: 'Story', items: [{ id: 'scene:one', label: 'One' }, { id: 'outline', label: 'Outline' }] },
+    { title: 'Lore', items: [{ id: 'entity:myth', label: 'Myth' }] },
+  ] };
+  chat.message(options);
+  const button = chat.element('contextOptions').children.find(child => child.type === 'button');
+  assert.ok(button, 'Add all button exists');
+  button.events.get('click')();
+  assert.equal(chat.element('contextCount').textContent, '3');
+  chat.message(options);
+  chat.element('input').value = 'Hello';
+  chat.element('previewPanel').hidden = true;
+  chat.element('preview').onclick();
+  assert.deepEqual(chat.posts.at(-1).include, ['scene:one', 'outline', 'entity:myth']);
+  chat.send();
+  assert.deepEqual(chat.posts.at(-1).include, ['scene:one', 'outline', 'entity:myth']);
+});
+
+test('Context popover dismissal preserves selection and updates expanded state', () => {
+  const chat = page();
+  chat.element('contextToggle').events.get('click')();
+  chat.message({ type: 'contextOptions', groups: [{ title: 'Lore', items: [{ id: 'entity:myth', label: 'Myth' }] }] });
+  const panel = chat.element('context');
+  panel.querySelectorAll('input[type="checkbox"]')[0].checked = true;
+  assert.equal(panel.popoverOpen, true);
+  panel.hidePopover();
+  assert.equal(chat.element('contextToggle').attributes.get('aria-expanded'), 'false');
+  chat.element('input').value = 'Hello';
+  chat.send();
+  assert.deepEqual(chat.posts.at(-1).include, ['entity:myth']);
+});
+
+test('Preview replaces Context and late replies cannot reopen a dismissed popover', () => {
+  const chat = page();
+  chat.element('contextToggle').events.get('click')();
+  chat.element('preview').onclick();
+  const requestId = chat.posts.at(-1).requestId;
+  assert.equal(chat.element('context').hidden, true);
+  assert.equal(chat.element('previewPanel').popoverOpen, true);
+  chat.element('previewPanel').hidePopover();
+  chat.message({ type: 'preview', requestId, lines: [], text: 'old preview' });
+  assert.equal(chat.element('previewPanel').hidden, true);
+  chat.element('preview').onclick();
+  chat.message({ type: 'preview', requestId, lines: [], text: 'old preview' });
+  assert.equal(chat.element('previewContent').textContent, 'Loading preview…');
+  chat.message({ type: 'preview', requestId: chat.posts.at(-1).requestId, lines: [] });
+  assert.equal(chat.element('previewContent').innerHTML, '<p></p>');
+});
+
+test('chat budget controls submit shared settings and show the confirmed allowance', () => {
+  const chat = page();
+  chat.element('chatContextBudget').value = '20000';
+  chat.element('chatContextLength').value = '0';
+  chat.element('budgetForm').events.get('submit')({ preventDefault() {} });
+  assert.deepEqual(chat.posts.at(-1), { type: 'setBudgets', contextBudget: '20000', contextLength: '0' });
+  assert.equal(chat.element('applyBudgets').disabled, true);
+  chat.message({ type: 'budgets', budgets: {
+    contextBudget: 20000, contextLength: 0, minimum: 500, maximum: 2000000, inputBudget: 14952, outputReserve: 2048,
+  } });
+  assert.equal(chat.element('applyBudgets').disabled, false);
+  assert.equal(chat.element('budgetSummary').textContent, '14,952 input tokens · 2,048 reserved for the answer');
+  chat.element('budgetForm').events.get('submit')({ preventDefault() {} });
+  chat.message({ type: 'budgetsRejected', error: 'Cannot save settings' });
+  assert.equal(chat.element('applyBudgets').disabled, false);
+  assert.equal(chat.element('budgetSummary').textContent, 'Cannot save settings');
+});
+
+test('the model popover supports keyboard navigation, selection, and the settings default', () => {
+  const chat = page();
+  chat.message({ type: 'models', current: 'sonnet', models: [{ id: 'sonnet', label: 'Claude Sonnet' }, { id: 'opus', label: 'Claude Opus' }] });
+  assert.equal(chat.element('modelLabel').textContent, 'Claude Sonnet');
+  chat.element('model').events.get('click')();
+  const menu = chat.element('modelMenu');
+  assert.equal(menu.popoverOpen, true);
+  menu.events.get('keydown')({ key: 'ArrowDown', preventDefault() {} });
+  menu.children[2].events.get('click')();
+  assert.deepEqual(chat.posts.at(-1), { type: 'setModel', model: 'opus' });
+  assert.equal(chat.element('modelLabel').textContent, 'Claude Opus');
+  assert.equal(menu.hidden, true);
+  menu.children[0].events.get('click')();
+  assert.deepEqual(chat.posts.at(-1), { type: 'setModel', model: '' });
+  assert.equal(menu.children[0].attributes.get('aria-checked'), 'true');
 });

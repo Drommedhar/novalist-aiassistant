@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <script src="__novalist/theme.js"></script>
+<link rel="stylesheet" href="panel-controls.css" />
 <title>Character Chat</title>
 <style>
 :root {
@@ -39,12 +40,13 @@ select {
 #status { font-size: 11px; color: var(--subtle); padding: 0 12px; }
 #turns { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
 .turn { max-width: 85%; padding: 8px 12px; border-radius: 10px; white-space: pre-wrap; }
-.turn .speaker { font-size: 11px; color: var(--subtle); margin-bottom: 2px; }
+.turn .speaker { font-size: var(--nl-font-caption, 12px); font-weight: 600; color: var(--dim); margin-bottom: 2px; }
 .turn.user { align-self: flex-end; background: var(--accent); color: var(--on-accent); }
+.turn.user .speaker { color: inherit; }
 .turn.character { align-self: flex-start; background: var(--card); border: 1px solid var(--border); }
-#composer { display: flex; gap: 8px; padding: 10px; border-top: 1px solid var(--border); }
+#composer { display: flex; align-items: center; gap: 8px; padding: 10px; border-top: 1px solid var(--border); }
 #input {
-  flex: 1; resize: none; font: inherit; color: var(--text);
+  flex: 1; min-width: 0; resize: none; field-sizing: content; max-height: min(30vh, 12lh); font: inherit; color: var(--text);
   background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 8px;
 }
 button {
@@ -63,7 +65,7 @@ button:disabled { opacity: .5; cursor: default; }
 <div id="status"></div>
 <div id="turns"></div>
 <div id="composer">
-  <textarea id="input" rows="2" data-i18n-ph="placeholder" placeholder="Speak with your character..."></textarea>
+  <textarea id="input" rows="1" data-i18n-ph="placeholder" placeholder="Speak with your character..."></textarea>
   <button id="send" data-i18n="send">Send</button>
   <button id="cancel" class="secondary" data-i18n="stop" hidden>Stop</button>
   <button id="reset" class="secondary" data-i18n="reset">Reset</button>

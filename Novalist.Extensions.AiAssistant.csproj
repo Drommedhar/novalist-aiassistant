@@ -13,7 +13,7 @@
   <ItemGroup>
     <Content Include="extension.json" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Locales\*.json" CopyToOutputDirectory="PreserveNewest" Link="Locales\%(Filename)%(Extension)" />
-    <Content Include="web\*.html" CopyToOutputDirectory="PreserveNewest" Link="web\%(Filename)%(Extension)" />
+    <Content Include="web\*.html;web\*.css" CopyToOutputDirectory="PreserveNewest" Link="web\%(Filename)%(Extension)" />
   </ItemGroup>
   <!-- Development and CI use the host SDK checkout; UseLocalSdk=false selects the released package. -->
   <ItemGroup Condition="'$(UseLocalSdk)' != 'false'">

@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <script src="__novalist/theme.js"></script>
+<link rel="stylesheet" href="panel-controls.css" />
 <title>AI Chat</title>
 <style>
 :root {
@@ -36,26 +37,41 @@ body {
 .msg.user { align-self: flex-end; background: var(--accent); color: var(--on-accent); }
 .msg.assistant { align-self: flex-start; background: var(--card); border: 1px solid var(--border); }
 .thinking { font-size: 11px; color: var(--subtle); border-left: 2px solid var(--border); padding-left: 8px; margin-bottom: 6px; }
-#composer { display: flex; gap: 8px; padding: 10px; border-top: 1px solid var(--border); }
+#composer { display: flex; align-items: center; gap: 8px; padding: 10px; border-top: 1px solid var(--border); }
 #input {
-  flex: 1; resize: none; font: inherit; color: var(--text);
+  flex: 1; min-width: 0; resize: none; field-sizing: content; max-height: min(30vh, 12lh); font: inherit; color: var(--text);
   background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 8px;
 }
-button {
+button, select {
   font: inherit; border: none; border-radius: 8px; padding: 8px 14px;
   background: var(--accent); color: var(--on-accent); cursor: pointer;
 }
-button.secondary { background: var(--card); color: var(--dim); border: 1px solid var(--border); }
+button.secondary, select.secondary { background: var(--card); color: var(--dim); border: 1px solid var(--border); }
+select { color-scheme: light dark; }
+select option { background: var(--card); color: var(--text); }
 button:disabled { opacity: .5; cursor: default; }
 
 /* The picker. Deliberately a list of named things rather than a description of
    a strategy: "the scene I am in" and "Mira Vance" are things somebody can
    decide about, whereas "relevant context" is not. */
-#context {
-  max-height: 40vh; overflow-y: auto; padding: 8px 10px;
-  border-top: 1px solid var(--border); background: var(--card);
+.chat-popover {
+  position: fixed; inset: auto; margin: 0;
+  overflow: auto; padding: var(--nl-space-lg, 16px);
+  border: 1px solid var(--border); border-radius: var(--nl-radius-lg, 12px);
+  background: var(--card); color: var(--text); font: inherit;
+  box-shadow: 0 var(--nl-space-tightest, 4px) var(--nl-space-xl, 24px) color-mix(in srgb, var(--bg), transparent 40%);
+  overflow-wrap: anywhere;
+}
+#context:popover-open {
   display: flex; flex-direction: column; gap: 2px;
 }
+#budgetForm { display: grid; gap: var(--nl-space-sm, 8px); padding-bottom: var(--nl-space-md, 12px); border-bottom: 1px solid var(--border); }
+#budgetForm label { display: grid; gap: var(--nl-space-tightest, 4px); }
+#budgetForm input {
+  width: 100%; font: inherit; background: var(--bg); color: var(--text);
+  border: 1px solid var(--border); border-radius: var(--nl-radius-md, 8px); padding: var(--nl-space-sm, 8px);
+}
+#budgetForm p { margin: 0; color: var(--dim); font-size: var(--nl-font-caption, 12px); }
 .ctx-group {
   font-size: 11px; text-transform: uppercase; letter-spacing: .06em;
   color: var(--dim); margin: 8px 0 2px;
@@ -75,15 +91,7 @@ button:disabled { opacity: .5; cursor: default; }
   font-size: 12px; font-style: italic; padding: 2px 0;
 }
 
-/* The preview sits above the composer and scrolls on its own: an assembled
-   prompt is long, and pushing the input box off screen would be worse than
-   showing nothing. */
-#previewPanel {
-  border-top: 1px solid var(--border, #3f4147);
-  max-height: 45vh;
-  overflow-y: auto;
-  padding: 10px 12px;
-}
+/* The preview floats over the conversation and scrolls without moving the composer. */
 #previewPanel table { width: 100%; border-collapse: collapse; }
 #previewPanel th, #previewPanel td { padding: 3px 6px; text-align: left; }
 #previewPanel td.num { text-align: right; font-variant-numeric: tabular-nums; }
@@ -91,22 +99,48 @@ button:disabled { opacity: .5; cursor: default; }
 #previewPanel pre {
   white-space: pre-wrap;
   word-break: break-word;
-  font-size: 12px;
-  margin: 8px 0 0;
+  font-family: var(--nl-font-mono, ui-monospace, monospace);
+  font-size: inherit;
+  margin: var(--nl-space-sm, 8px) 0 0;
+  padding: var(--nl-space-md, 12px); background: var(--bg); border-radius: var(--nl-radius-md, 8px);
 }
+.popover-header { display: flex; align-items: center; justify-content: space-between; gap: var(--nl-space-md, 12px); position: sticky; top: 0; z-index: 1; background: var(--card); padding-bottom: var(--nl-space-sm, 8px); border-bottom: 1px solid var(--border); }
+#previewContent > p:first-child { margin-top: var(--nl-space-sm, 8px); }
+.preview-totals { display: flex; flex-wrap: wrap; justify-content: space-between; gap: var(--nl-space-sm, 8px); padding-block: var(--nl-space-sm, 8px); margin-bottom: var(--nl-space-sm, 8px); color: var(--dim); font-variant-numeric: tabular-nums; }
+.prompt-details summary { cursor: pointer; color: var(--dim); font-weight: 600; padding-block: var(--nl-space-sm, 8px); }
+#model { display: flex; align-items: center; justify-content: space-between; gap: var(--nl-space-md, 12px); }
+#model::after { content: ''; width: 6px; height: 6px; border: solid currentColor; border-width: 0 1px 1px 0; transform: rotate(45deg); }
+#modelMenu:popover-open { display: grid; gap: var(--nl-space-tightest, 4px); }
+.model-option { text-align: left; background: transparent; color: var(--text); }
+.model-option:hover, .model-option:focus-visible { background: var(--bg); }
+.model-option[aria-checked="true"] { background: color-mix(in srgb, var(--accent) 18%, var(--card)); color: var(--text); box-shadow: inset 3px 0 var(--accent); }
 </style>
 </head>
 <body>
 <div id="messages"></div>
-<div id="context" hidden></div>
-<div id="previewPanel" hidden></div>
+<div id="context" class="chat-popover" popover="auto" role="dialog" aria-labelledby="contextToggle" hidden>
+  <form id="budgetForm">
+    <strong data-i18n="chatBudgetTitle">Token budgets</strong>
+    <label><span data-i18n="chatBudgetContext">Context budget (tokens)</span><input id="chatContextBudget" type="number" min="500" max="2000000" step="1" required /></label>
+    <label><span data-i18n="chatBudgetLength">Context Length (0 = default)</span><input id="chatContextLength" type="number" min="0" max="131072" step="1" required /></label>
+    <p data-i18n="chatBudgetHelp">Saved to AI Assistant settings. Context Length also affects LM Studio model loading. Use 0 to avoid an extra chat limit.</p>
+    <button id="applyBudgets" class="secondary" type="submit" data-i18n="chatBudgetApply">Apply budgets</button>
+    <p id="budgetSummary" role="status"></p>
+  </form>
+  <div id="contextOptions"></div>
+</div>
+<div id="previewPanel" class="chat-popover" popover="auto" role="dialog" aria-labelledby="preview" hidden>
+  <header class="popover-header"><strong data-i18n="previewTitle">Preview</strong><button id="closePreview" type="button" class="secondary" data-i18n="previewClose">Close</button></header>
+  <div id="previewContent"></div>
+</div>
+<div id="modelMenu" class="chat-popover" popover="auto" role="menu" aria-labelledby="model" hidden></div>
 <div id="composer">
-  <button id="contextToggle" class="secondary" aria-expanded="false"
+  <button id="contextToggle" class="secondary" aria-expanded="false" aria-controls="context" aria-haspopup="dialog"
           data-i18n="context" title="Choose what the model is told">Context<span
           id="contextCount" class="badge" hidden></span></button>
-  <textarea id="input" rows="2" data-i18n-ph="placeholder" placeholder="Ask about your story..."></textarea>
-  <select id="model" class="secondary" title="Which model answers this"></select>
-  <button id="preview" class="secondary" data-i18n="previewTitle"
+  <textarea id="input" rows="1" data-i18n-ph="placeholder" placeholder="Ask about your story..."></textarea>
+  <button id="model" type="button" class="secondary" title="Which model answers this" aria-haspopup="menu" aria-expanded="false" aria-controls="modelMenu" hidden><span id="modelLabel"></span></button>
+  <button id="preview" class="secondary" data-i18n="previewTitle" aria-expanded="false" aria-controls="previewPanel" aria-haspopup="dialog"
           title="See exactly what will be sent">Preview</button>
   <button id="send" data-i18n="send">Send</button>
   <button id="cancel" class="secondary" data-i18n="stop" hidden>Stop</button>
@@ -122,7 +156,7 @@ function tf(key, fallback, ...args) {
 }
 function applyStrings(map) {
   if (!map) return;
-  S = map;
+  S = { ...S, ...map };
   for (const el of document.querySelectorAll('[data-i18n]')) {
     const v = S[el.getAttribute('data-i18n')];
     if (v) el.textContent = v;
@@ -134,9 +168,17 @@ function applyStrings(map) {
 }
 const messagesEl = document.getElementById('messages');
 const modelSelect = document.getElementById('model');
+const modelMenu = document.getElementById('modelMenu');
+const modelLabel = document.getElementById('modelLabel');
 const previewPanel = document.getElementById('previewPanel');
+const previewContent = document.getElementById('previewContent');
 const previewBtn = document.getElementById('preview');
 const contextEl = document.getElementById('context');
+const contextOptionsEl = document.getElementById('contextOptions');
+const contextBudgetEl = document.getElementById('chatContextBudget');
+const contextLengthEl = document.getElementById('chatContextLength');
+const applyBudgetsBtn = document.getElementById('applyBudgets');
+const budgetSummary = document.getElementById('budgetSummary');
 const contextToggle = document.getElementById('contextToggle');
 const contextCount = document.getElementById('contextCount');
 const inputEl = document.getElementById('input');
@@ -144,6 +186,75 @@ const sendBtn = document.getElementById('send');
 const cancelBtn = document.getElementById('cancel');
 const resetBtn = document.getElementById('reset');
 let streamEl = null;
+let previewRequestId = 0;
+
+function hidePanel(panel) {
+  panel.hidePopover();
+  panel.hidden = true;
+}
+
+function positionPanel(panel, button) {
+  if (panel.hidden) return;
+  const gap = 12;
+  const viewport = document.documentElement;
+  const anchor = button.getBoundingClientRect();
+  const width = Math.max(0, Math.min(panel === contextEl ? 400 : panel === modelMenu ? 300 : 760, viewport.clientWidth - gap * 2));
+  const above = anchor.top;
+  const below = viewport.clientHeight - anchor.bottom;
+  const openAbove = above >= below;
+  panel.style.width = width + 'px';
+  panel.style.maxHeight = Math.max(0, Math.min(viewport.clientHeight * 0.65, (openAbove ? above : below) - gap * 2)) + 'px';
+  panel.style.left = Math.max(gap, Math.min(anchor.left, viewport.clientWidth - width - gap)) + 'px';
+  panel.style.top = (openAbove ? Math.max(gap, anchor.top - panel.offsetHeight - gap) : anchor.bottom + gap) + 'px';
+}
+
+function showPanel(panel, button) {
+  for (const other of [contextEl, previewPanel, modelMenu]) if (other !== panel) hidePanel(other);
+  panel.hidden = false;
+  panel.showPopover({ source: button });
+  positionPanel(panel, button);
+}
+
+for (const [panel, button] of [[contextEl, contextToggle], [previewPanel, previewBtn], [modelMenu, modelSelect]]) {
+  panel.addEventListener('toggle', (event) => {
+    panel.hidden = event.newState === 'closed';
+    button.setAttribute('aria-expanded', String(!panel.hidden));
+  });
+}
+window.addEventListener('resize', () => {
+  positionPanel(contextEl, contextToggle);
+  positionPanel(previewPanel, previewBtn);
+  positionPanel(modelMenu, modelSelect);
+});
+document.getElementById('closePreview').addEventListener('click', () => {
+  hidePanel(previewPanel);
+  previewBtn.focus();
+});
+
+function setBudgetSaving(saving) {
+  contextBudgetEl.disabled = saving;
+  contextLengthEl.disabled = saving;
+  applyBudgetsBtn.disabled = saving;
+}
+
+function drawBudgets(budgets, force) {
+  if (!force && [contextBudgetEl, contextLengthEl].includes(document.activeElement)) return;
+  contextBudgetEl.value = String(budgets.contextBudget);
+  contextBudgetEl.min = budgets.minimum;
+  contextBudgetEl.max = budgets.maximum;
+  contextLengthEl.value = String(budgets.contextLength);
+  budgetSummary.setAttribute('role', 'status');
+  budgetSummary.textContent = tf('chatBudgetSummary', '{0} input tokens · {1} reserved for the answer',
+    budgets.inputBudget.toLocaleString(), budgets.outputReserve.toLocaleString());
+  positionPanel(contextEl, contextToggle);
+}
+
+document.getElementById('budgetForm').addEventListener('submit', (event) => {
+  event.preventDefault();
+  if (applyBudgetsBtn.disabled || !document.getElementById('budgetForm').reportValidity()) return;
+  setBudgetSaving(true);
+  post({ type: 'setBudgets', contextBudget: contextBudgetEl.value, contextLength: contextLengthEl.value });
+});
 
 function post(msg) {
   parent.postMessage({ novalistExt: JSON.stringify(msg) }, '*');
@@ -207,6 +318,7 @@ window.addEventListener('message', (event) => {
   if (typeof raw !== 'string') return;
   const msg = JSON.parse(raw);
   applyStrings(msg.strings);
+  if (msg.budgets) drawBudgets(msg.budgets, msg.type === 'budgets');
   if (msg.type === 'history') {
     clearStream();
     sendPending = false;
@@ -215,9 +327,11 @@ window.addEventListener('message', (event) => {
     thinkingText = msg.streamingThinking || '';
     if (msg.reset) {
       inputEl.value = '';
-      previewPanel.hidden = true;
-      previewPanel.textContent = '';
-      contextEl.textContent = '';
+      hidePanel(previewPanel);
+      hidePanel(contextEl);
+      previewRequestId++;
+      previewContent.textContent = '';
+      contextOptionsEl.textContent = '';
       updateCount();
     }
     messagesEl.textContent = '';
@@ -235,8 +349,14 @@ window.addEventListener('message', (event) => {
     addMessage(msg.role, msg.text, msg.thinking);
   } else if (msg.type === 'contextOptions') {
     drawContext(msg.groups);
+  } else if (msg.type === 'budgets') {
+    setBudgetSaving(false);
+  } else if (msg.type === 'budgetsRejected') {
+    setBudgetSaving(false);
+    budgetSummary.setAttribute('role', 'alert');
+    budgetSummary.textContent = msg.error;
   } else if (msg.type === 'preview') {
-    drawPreview(msg);
+    if (!previewPanel.hidden && msg.requestId === previewRequestId) drawPreview(msg);
   } else if (msg.type === 'models') {
     drawModels(msg);
   } else if (msg.type === 'notice') {
@@ -250,7 +370,10 @@ window.addEventListener('message', (event) => {
     sendPending = false;
     updateComposer();
   } else if (msg.type === 'previewRejected') {
-    addMessage('error', msg.error);
+    if (!previewPanel.hidden && msg.requestId === previewRequestId) {
+      hidePanel(previewPanel);
+      addMessage('error', msg.error);
+    }
   } else if (msg.type === 'state') {
     if (msg.reset) { responseText = ''; thinkingText = ''; }
     responseText += msg.streamingDelta || '';
@@ -268,19 +391,35 @@ window.addEventListener('message', (event) => {
  */
 function drawModels(p) {
   const models = p.models || [];
+  modelMenu.textContent = '';
   if (models.length === 0) {
     modelSelect.hidden = true;
+    hidePanel(modelMenu);
     return;
   }
-  const esc = (v) => String(v ?? '').replace(/[&<>"]/g, (c) =>
-    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   // The empty option is the configured default, which is where a session
   // starts and where it goes back to when Settings changes.
-  modelSelect.innerHTML =
-    '<option value="">' + esc(t('modelFromSettings')) + '</option>' +
-    models.map((m) => '<option value="' + esc(m.id) + '">' + esc(m.label || m.id) +
-      '</option>').join('');
   modelSelect.value = p.current || '';
+  const choices = [{ id: '', label: t('modelFromSettings', 'Model from Settings') }, ...models];
+  modelLabel.textContent = choices.find(model => model.id === modelSelect.value)?.label || modelSelect.value;
+  for (const model of choices) {
+    const option = document.createElement('button');
+    option.type = 'button';
+    option.className = 'model-option';
+    option.value = model.id;
+    option.textContent = model.label || model.id;
+    option.setAttribute('role', 'menuitemradio');
+    option.setAttribute('aria-checked', String(model.id === modelSelect.value));
+    option.addEventListener('click', () => {
+      modelSelect.value = model.id;
+      modelLabel.textContent = option.textContent;
+      for (const item of modelMenu.querySelectorAll('button')) item.setAttribute('aria-checked', String(item === option));
+      post({ type: 'setModel', model: model.id });
+      hidePanel(modelMenu);
+      modelSelect.focus();
+    });
+    modelMenu.appendChild(option);
+  }
   modelSelect.hidden = false;
 }
 
@@ -297,8 +436,8 @@ function drawPreview(p) {
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
   if (lines.length === 0) {
-    previewPanel.innerHTML = '<p>' + esc(t('previewEmpty')) + '</p>';
-    previewPanel.hidden = false;
+    previewContent.innerHTML = '<p>' + esc(t('previewEmpty')) + '</p>';
+    positionPanel(previewPanel, previewBtn);
     return;
   }
 
@@ -307,35 +446,62 @@ function drawPreview(p) {
     esc(l.tier) + '</td><td class="num">' + (l.estimatedTokens || 0).toLocaleString() +
     '</td><td>' + esc(t(l.kept ? 'previewKept' : 'previewDropped')) + '</td></tr>').join('');
 
-  previewPanel.innerHTML =
+  previewContent.innerHTML =
     '<p>' + esc(t('previewHint')) + '</p>' +
+    '<div class="preview-totals"><span>' + esc(t('previewTotal')) + ' ' +
+    (p.estimatedTokens || 0).toLocaleString() + ' / ' +
+    (p.tokenBudget || 0).toLocaleString() + '</span>' +
+    '<span>' + esc(t('previewReservedOutput')) + ' ' + (p.outputTokenReserve || 0).toLocaleString() + '</span></div>' +
     '<table><thead><tr>' +
     '<th>' + esc(t('previewBlock')) + '</th>' +
     '<th>' + esc(t('previewTier')) + '</th>' +
     '<th>' + esc(t('previewTokens')) + '</th>' +
     '<th></th></tr></thead><tbody>' + rows + '</tbody></table>' +
-    '<p>' + esc(t('previewTotal')) + ' ' +
-    (p.estimatedTokens || 0).toLocaleString() + ' / ' +
-    (p.tokenBudget || 0).toLocaleString() + '</p>' +
-    '<p>' + esc(t('previewReservedOutput')) + ' ' + (p.outputTokenReserve || 0).toLocaleString() + '</p>' +
     (p.dropped && p.dropped.length ? '<p>' + esc(p.dropped.join(', ')) + '</p>' : '') +
-    '<pre>' + esc(p.text) + '</pre>';
-  previewPanel.hidden = false;
+    (p.unavailableCount ? '<p>' + esc(tf('contextExcluded', '', p.unavailableCount)) + '</p>' : '') +
+    '<details class="prompt-details"><summary>' + esc(t('previewPrompt', 'Full prompt')) + '</summary><pre>' + esc(p.text) + '</pre></details>';
+  previewContent.querySelector('details')?.addEventListener('toggle', () => positionPanel(previewPanel, previewBtn));
+  positionPanel(previewPanel, previewBtn);
 }
 
 function ticked() {
   return Array.from(contextEl.querySelectorAll('input:checked')).map((b) => b.value);
 }
 
-modelSelect.onchange = () => post({ type: 'setModel', model: modelSelect.value });
+function openModelMenu() {
+  showPanel(modelMenu, modelSelect);
+  const choices = Array.from(modelMenu.querySelectorAll('button'));
+  (choices.find(option => option.value === modelSelect.value) || choices[0])?.focus();
+}
+modelSelect.addEventListener('click', () => {
+  if (!modelMenu.hidden) hidePanel(modelMenu);
+  else openModelMenu();
+});
+modelSelect.addEventListener('keydown', (event) => {
+  if (!['ArrowDown', 'ArrowUp'].includes(event.key)) return;
+  event.preventDefault();
+  openModelMenu();
+  if (event.key === 'ArrowUp') Array.from(modelMenu.querySelectorAll('button')).at(-1)?.focus();
+});
+modelMenu.addEventListener('keydown', (event) => {
+  const choices = Array.from(modelMenu.querySelectorAll('button'));
+  if (!choices.length || !['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+  event.preventDefault();
+  const current = choices.indexOf(document.activeElement);
+  const next = event.key === 'Home' ? 0 : event.key === 'End' ? choices.length - 1
+    : (current + (event.key === 'ArrowDown' ? 1 : -1) + choices.length) % choices.length;
+  choices[next].focus();
+});
 
 previewBtn.onclick = () => {
   // A second press closes it: the preview is a thing to glance at, not a mode.
   if (!previewPanel.hidden) {
-    previewPanel.hidden = true;
+    hidePanel(previewPanel);
     return;
   }
-  post({ type: 'preview', text: inputEl.value.trim(), include: ticked() });
+  previewContent.textContent = t('previewLoading', 'Loading preview…');
+  showPanel(previewPanel, previewBtn);
+  post({ type: 'preview', requestId: ++previewRequestId, text: inputEl.value.trim(), include: ticked() });
 };
 
 function updateCount() {
@@ -345,16 +511,26 @@ function updateCount() {
 }
 
 function drawContext(groups) {
-  contextEl.textContent = '';
+  const selected = new Set(ticked());
+  contextOptionsEl.textContent = '';
   if (!groups || !groups.length) {
-    contextEl.appendChild(document.createTextNode(''));
+    updateCount();
     return;
   }
+  const addAll = document.createElement('button');
+  addAll.type = 'button';
+  addAll.className = 'secondary';
+  addAll.textContent = t('contextAddAll', 'Add all');
+  addAll.addEventListener('click', () => {
+    for (const box of contextEl.querySelectorAll('input[type="checkbox"]')) box.checked = true;
+    updateCount();
+  });
+  contextOptionsEl.appendChild(addAll);
   for (const group of groups) {
     const heading = document.createElement('div');
     heading.className = 'ctx-group';
     heading.textContent = group.title;
-    contextEl.appendChild(heading);
+    contextOptionsEl.appendChild(heading);
 
     for (const item of group.items) {
       const label = document.createElement('label');
@@ -362,13 +538,15 @@ function drawContext(groups) {
       const box = document.createElement('input');
       box.type = 'checkbox';
       box.value = item.id;
+      box.checked = selected.has(item.id);
       box.addEventListener('change', updateCount);
       label.appendChild(box);
       label.appendChild(document.createTextNode(' ' + item.label));
-      contextEl.appendChild(label);
+      contextOptionsEl.appendChild(label);
     }
   }
   updateCount();
+  positionPanel(contextEl, contextToggle);
 }
 
 function send() {
@@ -383,9 +561,11 @@ function send() {
 
 contextToggle.addEventListener('click', () => {
   const showing = !contextEl.hidden;
-  contextEl.hidden = showing;
-  contextToggle.setAttribute('aria-expanded', String(!showing));
-  if (!showing && !contextEl.childElementCount) post({ type: 'contextOptions' });
+  if (showing) hidePanel(contextEl);
+  else {
+    showPanel(contextEl, contextToggle);
+    post({ type: 'contextOptions' });
+  }
 });
 
 sendBtn.addEventListener('click', send);
