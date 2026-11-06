@@ -44,9 +44,9 @@ select {
 .turn.user { align-self: flex-end; background: var(--accent); color: var(--on-accent); }
 .turn.user .speaker { color: inherit; }
 .turn.character { align-self: flex-start; background: var(--card); border: 1px solid var(--border); }
-#composer { display: flex; gap: 8px; padding: 10px; border-top: 1px solid var(--border); }
+#composer { display: flex; align-items: center; gap: 8px; padding: 10px; border-top: 1px solid var(--border); }
 #input {
-  flex: 1; resize: none; font: inherit; color: var(--text);
+  flex: 1; min-width: 0; resize: none; field-sizing: content; max-height: min(30vh, 12lh); font: inherit; color: var(--text);
   background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 8px;
 }
 button {
@@ -65,7 +65,7 @@ button:disabled { opacity: .5; cursor: default; }
 <div id="status"></div>
 <div id="turns"></div>
 <div id="composer">
-  <textarea id="input" rows="2" data-i18n-ph="placeholder" placeholder="Speak with your character..."></textarea>
+  <textarea id="input" rows="1" data-i18n-ph="placeholder" placeholder="Speak with your character..."></textarea>
   <button id="send" data-i18n="send">Send</button>
   <button id="cancel" class="secondary" data-i18n="stop" hidden>Stop</button>
   <button id="reset" class="secondary" data-i18n="reset">Reset</button>

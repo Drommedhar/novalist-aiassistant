@@ -37,9 +37,9 @@ body {
 .msg.user { align-self: flex-end; background: var(--accent); color: var(--on-accent); }
 .msg.assistant { align-self: flex-start; background: var(--card); border: 1px solid var(--border); }
 .thinking { font-size: 11px; color: var(--subtle); border-left: 2px solid var(--border); padding-left: 8px; margin-bottom: 6px; }
-#composer { display: flex; gap: 8px; padding: 10px; border-top: 1px solid var(--border); }
+#composer { display: flex; align-items: center; gap: 8px; padding: 10px; border-top: 1px solid var(--border); }
 #input {
-  flex: 1; resize: none; font: inherit; color: var(--text);
+  flex: 1; min-width: 0; resize: none; field-sizing: content; max-height: min(30vh, 12lh); font: inherit; color: var(--text);
   background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 8px;
 }
 button, select {
@@ -138,7 +138,7 @@ button:disabled { opacity: .5; cursor: default; }
   <button id="contextToggle" class="secondary" aria-expanded="false" aria-controls="context" aria-haspopup="dialog"
           data-i18n="context" title="Choose what the model is told">Context<span
           id="contextCount" class="badge" hidden></span></button>
-  <textarea id="input" rows="2" data-i18n-ph="placeholder" placeholder="Ask about your story..."></textarea>
+  <textarea id="input" rows="1" data-i18n-ph="placeholder" placeholder="Ask about your story..."></textarea>
   <button id="model" type="button" class="secondary" title="Which model answers this" aria-haspopup="menu" aria-expanded="false" aria-controls="modelMenu" hidden><span id="modelLabel"></span></button>
   <button id="preview" class="secondary" data-i18n="previewTitle" aria-expanded="false" aria-controls="previewPanel" aria-haspopup="dialog"
           title="See exactly what will be sent">Preview</button>
